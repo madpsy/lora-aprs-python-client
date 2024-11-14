@@ -1,5 +1,7 @@
 # lora-aprs-python-client
-Lightweight Python application to view iGate logs from lora-aprs.live
+Lightweight Python application to view iGate logs from https://lora-aprs.live
+
+Note: Some iGates haven't sent logs for a while so pick one you know is currently active.
 
 `git clone https://github.com/madpsy/lora-aprs-python-client.git`
 
