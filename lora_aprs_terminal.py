@@ -37,11 +37,11 @@ async def main():
 
 async def run_application(selected_igate):
     # Create UI components
-    logs_area = TextArea(style="class:logs", scrollbar=True, focusable=True)
-    beacons_area = TextArea(style="class:beacons", scrollbar=True, focusable=True)
-    decoded_stations_area = TextArea(style="class:decoded", scrollbar=True, focusable=True)
-    unique_direct_area = TextArea(style="class:unique_direct", scrollbar=True, focusable=True)
-    unique_digipeated_area = TextArea(style="class:unique_digipeated", scrollbar=True, focusable=True)
+    logs_area = TextArea(style="class:logs", scrollbar=True, focusable=True, read_only=True)
+    beacons_area = TextArea(style="class:beacons", scrollbar=True, focusable=True, read_only=True)
+    decoded_stations_area = TextArea(style="class:decoded", scrollbar=True, focusable=True, read_only=True)
+    unique_direct_area = TextArea(style="class:unique_direct", scrollbar=True, focusable=True, read_only=True)
+    unique_digipeated_area = TextArea(style="class:unique_digipeated", scrollbar=True, focusable=True, read_only=True)
 
     # Create frames with dynamic heights
     logs_frame = Frame(body=logs_area, title="Messages", height=Dimension(weight=1))
