@@ -13,20 +13,29 @@ from prompt_toolkit.styles import Style
 from prompt_toolkit.layout.dimension import Dimension  # Import Dimension for dynamic sizing
 
 async def main():
-    # Check if iGate is passed as a command-line argument
-    if len(sys.argv) > 1:
-        selected_igate = sys.argv[1].upper()
-    else:
-        igates = await fetch_igates()
-        if not igates:
-            print("No iGates found.")
-            return
+    while True:
+        # Check if iGate is passed as a command-line argument
+        if len(sys.argv) > 1:
+            selected_igate = sys.argv[1].upper()
+        else:
+            igates = await fetch_igates()
+            if not igates:
+                print("No iGates found.")
+                return
 
-        selected_igate = await select_igate(igates)
-        if not selected_igate:
-            print("No iGate selected.")
-            return
+            selected_igate = await select_igate(igates)
+            if not selected_igate:
+                print("No iGate selected.")
+                return
 
+        # Run the main application
+        exit_to_select_igate = await run_application(selected_igate)
+        if not exit_to_select_igate:
+            # User chose to exit the application completely
+            break
+        # Else, loop back to re-select iGate
+
+async def run_application(selected_igate):
     # Create UI components
     logs_area = TextArea(style="class:logs", scrollbar=True, focusable=True)
     beacons_area = TextArea(style="class:beacons", scrollbar=True, focusable=True)
@@ -71,7 +80,11 @@ async def main():
     @kb.add('c-c')
     @kb.add('q')
     def exit_(event):
-        event.app.exit()
+        event.app.exit(result=False)  # Return False to signal exit
+
+    @kb.add('escape')
+    def exit_to_select(event):
+        event.app.exit(result=True)  # Return True to signal exit to select iGate
 
     style = Style.from_dict({
         'header': 'bold underline',
@@ -92,7 +105,7 @@ async def main():
     )
 
     # Start MQTT client and subscribe to topics
-    asyncio.create_task(mqtt_handler(
+    mqtt_task = asyncio.create_task(mqtt_handler(
         selected_igate,
         logs_area,
         beacons_area,
@@ -102,7 +115,17 @@ async def main():
         application
     ))
 
-    await application.run_async()
+    # Run the application and get the exit result
+    exit_to_select_igate = await application.run_async()
+
+    # After the application exits, we need to cancel the mqtt_task
+    mqtt_task.cancel()
+    try:
+        await mqtt_task
+    except asyncio.CancelledError:
+        pass
+
+    return exit_to_select_igate
 
 async def mqtt_handler(
     selected_igate,
