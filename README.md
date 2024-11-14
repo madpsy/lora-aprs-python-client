@@ -14,6 +14,7 @@ python3 lora_aprs_terminal.py
 
 Can either select an iGate interactively or specify one as the command line parameter. Use Tab to switch between sections for scrolling and Esc for the iGates menu.
 
+![Main View](main.png?raw=true "Main View")
+
 ![Select iGate](select.png?raw=true "Select iGate")
 
-![Main View](main.png?raw=true "Main View")
