@@ -59,7 +59,7 @@ async def run_application(selected_igate):
 
     body = HSplit([
         Label(text=f"Selected iGate: {selected_igate}", style="class:header"),
-        Label(text="Use Tab/Shift+Tab to move focus between sections. Use arrow keys to scroll.", style="class:instructions"),
+        Label(text="Use Tab/Shift+Tab to move focus between sections. Use arrow keys to scroll. Esc for iGate menu.", style="class:instructions"),
         logs_frame,
         beacons_frame,
         decoded_stations_frame,
