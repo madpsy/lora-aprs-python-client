@@ -1,0 +1,4 @@
+aiomqtt
+prompt_toolkit
+requests
+typing_extensions
