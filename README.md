@@ -24,7 +24,7 @@ You can build a binary by running this (will output to the `dist` directory):
 
 `pyinstaller --onefile lora_aprs_terminal.py`
 
-Can either select an iGate interactively or specify one as the command line parameter. Use Tab to switch between sections for scrolling and Esc for the iGates menu.
+Can either select an iGate interactively or specify one as the command line parameter. Use Tab to switch between sections for scrolling and Esc for the iGates menu. Make the text smaller/larger with ctrl +/-
 
 ![Main View](main.png?raw=true "Main View")
 
