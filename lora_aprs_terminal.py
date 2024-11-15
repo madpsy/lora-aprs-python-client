@@ -14,6 +14,8 @@ from prompt_toolkit.styles import Style
 from prompt_toolkit.layout.dimension import Dimension  # For dynamic sizing
 from prompt_toolkit.formatted_text import HTML  # For colored status indicators
 
+if sys.platform.startswith('win'):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 async def main():
     current_igate = None  # Initialize current iGate as None
