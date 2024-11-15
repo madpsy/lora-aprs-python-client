@@ -15,6 +15,8 @@ from prompt_toolkit.layout.dimension import Dimension  # For dynamic sizing
 from prompt_toolkit.formatted_text import HTML  # For colored status indicators
 from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog  # Import for dialogs
 
+import re  # For callsign validation
+
 if sys.platform.startswith('win'):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -25,9 +27,13 @@ async def main():
     while True:
         if first_run and len(sys.argv) > 1:
             selected_igate = sys.argv[1].upper()
-            current_igate = selected_igate  # Set current iGate
-            first_run = False
-            print(f"Using iGate from command-line argument: {selected_igate}")  # Logging
+            if validate_callsign(selected_igate):
+                current_igate = selected_igate  # Set current iGate
+                first_run = False
+                print(f"Using iGate from command-line argument: {selected_igate}")  # Logging
+            else:
+                print(f"Invalid iGate callsign provided via command-line: {selected_igate}")
+                return
         else:
             igates = await fetch_igates()
             if not igates:
@@ -49,13 +55,12 @@ async def main():
             break
         # Else, loop back to re-select iGate
 
-
 async def run_application(selected_igate, current_igate):
     # Initialize connection status
     connection_status = {'status': False}
 
-    # **NEW**: Initialize reset_in_progress flag
-    reset_in_progress = {'value': False}  # Mutable object to track reset state
+    # Initialize reset_in_progress flag
+    reset_in_progress = {'value': False}
 
     # Create UI components
     logs_area = TextArea(style="class:logs", scrollbar=True, focusable=True, read_only=True)
@@ -63,6 +68,12 @@ async def run_application(selected_igate, current_igate):
     decoded_stations_area = TextArea(style="class:decoded", scrollbar=True, focusable=True, read_only=True)
     unique_direct_area = TextArea(style="class:unique_direct", scrollbar=True, focusable=True, read_only=True)
     unique_digipeated_area = TextArea(style="class:unique_digipeated", scrollbar=True, focusable=True, read_only=True)
+
+    # Initialize data structures
+    unique_direct_dict = OrderedDict()
+    unique_digipeated_dict = OrderedDict()
+    beacons_dict = OrderedDict()            # New dictionary for beacons
+    decoded_stations_dict = OrderedDict()   # New dictionary for decoded stations
 
     # **MODIFICATION**: Create MQTT Status Indicator with formatted text
     mqtt_status_indicator = Label(text=generate_status_text(connection_status['status']),
@@ -132,6 +143,8 @@ async def run_application(selected_igate, current_igate):
                 unique_digipeated_dict,
                 unique_direct_area,
                 unique_digipeated_area,
+                beacons_dict,               # Pass beacons_dict
+                decoded_stations_dict,      # Pass decoded_stations_dict
                 mqtt_task_container,
                 connection_status,
                 mqtt_status_indicator,
@@ -155,10 +168,6 @@ async def run_application(selected_igate, current_igate):
         mouse_support=True,  # Enable mouse support for clicking to focus
     )
 
-    # Initialize data structures
-    unique_direct_dict = OrderedDict()
-    unique_digipeated_dict = OrderedDict()
-
     # **NEW**: Container to hold MQTT task for easy cancellation and reconnection
     mqtt_task_container = {'task': None}
 
@@ -172,6 +181,8 @@ async def run_application(selected_igate, current_igate):
         unique_digipeated_area,
         unique_direct_dict,
         unique_digipeated_dict,
+        beacons_dict,               # Pass beacons_dict
+        decoded_stations_dict,      # Pass decoded_stations_dict
         application,
         connection_status,
         mqtt_status_indicator
@@ -181,8 +192,12 @@ async def run_application(selected_igate, current_igate):
     update_seen_task = asyncio.create_task(update_seen_times(
         unique_direct_dict,
         unique_digipeated_dict,
+        beacons_dict,
+        decoded_stations_dict,
         unique_direct_area,
         unique_digipeated_area,
+        beacons_area,
+        decoded_stations_area,
         application
     ))
 
@@ -203,7 +218,6 @@ async def run_application(selected_igate, current_igate):
 
     return exit_to_select_igate
 
-
 # **NEW**: Handle Reset and Reconnect Logic
 async def handle_reset_and_reconnect(
     selected_igate,       # Current iGate
@@ -211,6 +225,8 @@ async def handle_reset_and_reconnect(
     unique_digipeated_dict,
     unique_direct_area,
     unique_digipeated_area,
+    beacons_dict,
+    decoded_stations_dict,
     mqtt_task_container,
     connection_status,
     mqtt_status_indicator,
@@ -224,13 +240,15 @@ async def handle_reset_and_reconnect(
         # **FIX**: Clear data structures
         unique_direct_dict.clear()
         unique_digipeated_dict.clear()
+        beacons_dict.clear()
+        decoded_stations_dict.clear()
 
         # **FIX**: Clear UI tables
         unique_direct_area.text = ""
         unique_digipeated_area.text = ""
-        logs_area.text = ""             # **FIX**: Clear logs_area
-        beacons_area.text = ""          # **FIX**: Clear beacons_area
-        decoded_stations_area.text = ""  # **FIX**: Clear decoded_stations_area
+        beacons_area.text = ""
+        decoded_stations_area.text = ""
+        logs_area.text = ""
 
         # **FIX**: Update status to Disconnected
         connection_status['status'] = False
@@ -255,6 +273,8 @@ async def handle_reset_and_reconnect(
             unique_digipeated_area,
             unique_direct_dict,
             unique_digipeated_dict,
+            beacons_dict,
+            decoded_stations_dict,
             application,
             connection_status,
             mqtt_status_indicator
@@ -263,7 +283,6 @@ async def handle_reset_and_reconnect(
     finally:
         # **FIX**: Reset the reset_in_progress flag
         reset_in_progress['value'] = False
-
 
 # **MODIFICATION**: Function to Generate Status Text with Colored Dot
 def generate_status_text(is_connected):
@@ -278,7 +297,6 @@ def generate_status_text(is_connected):
             ('class:status_disconnected_text', 'Disconnected')
         ]
 
-
 async def mqtt_handler(
     selected_igate,
     logs_area,
@@ -288,6 +306,8 @@ async def mqtt_handler(
     unique_digipeated_area,
     unique_direct_dict,
     unique_digipeated_dict,
+    beacons_dict,
+    decoded_stations_dict,
     application,
     connection_status,
     mqtt_status_indicator
@@ -324,6 +344,8 @@ async def mqtt_handler(
                     unique_digipeated_area,
                     unique_direct_dict,
                     unique_digipeated_dict,
+                    beacons_dict,
+                    decoded_stations_dict,
                     application
                 )
     except Exception as e:
@@ -332,7 +354,6 @@ async def mqtt_handler(
         mqtt_status_indicator.text = generate_status_text(connection_status['status'])
         application.invalidate()
         print(f"Error in MQTT handler: {e}")  # Retain this for error debugging
-
 
 async def handle_message(
     topic,
@@ -345,6 +366,8 @@ async def handle_message(
     unique_digipeated_area,
     unique_direct_dict,
     unique_digipeated_dict,
+    beacons_dict,
+    decoded_stations_dict,
     application
 ):
     # Parse the topic
@@ -369,7 +392,7 @@ async def handle_message(
         elif message_type.lower() == 'json_message':
             if subtopic.upper() == igate.upper():
                 # Beacon message
-                await append_beacon_message(message, beacons_area, application)
+                await append_beacon_message(message, beacons_area, application, beacons_dict)
             else:
                 # Decoded station message
                 callsign = subtopic  # Assuming the callsign is the subtopic
@@ -381,6 +404,7 @@ async def handle_message(
                     unique_digipeated_area,
                     unique_direct_dict,
                     unique_digipeated_dict,
+                    decoded_stations_dict,    # Pass decoded_stations_dict
                     application
                 )
         else:
@@ -390,7 +414,6 @@ async def handle_message(
         # Unknown message format
         return
 
-
 async def append_log_message(message, logs_area, application):
     try:
         log = json.loads(message)
@@ -398,11 +421,12 @@ async def append_log_message(message, logs_area, application):
         try:
             timestamp_dt = datetime.fromisoformat(timestamp)
             local_timestamp = timestamp_dt.astimezone()
-            timestamp_str = local_timestamp.strftime('%Y-%m-%d %H:%M:%S %Z')
+            # **MODIFICATION**: Remove timezone from timestamp
+            timestamp_str = local_timestamp.strftime('%Y-%m-%d %H:%M:%S')
         except Exception:
             timestamp_str = 'Invalid Timestamp'
 
-        raw_message = log.get('raw_message', 'No Message')
+        raw_message = log.get('raw_message', 'No Message') or 'No Message'
         formatted_message = f"{timestamp_str}: {raw_message}\n"
     except Exception:
         formatted_message = f"Invalid log message: {message}\n"
@@ -414,40 +438,61 @@ async def append_log_message(message, logs_area, application):
         logs_area.text = '\n'.join(lines[:1000])
     application.invalidate()
 
+def truncate_text(text, max_length=20):
+    if len(text) > max_length:
+        return text[:max_length-3] + '...'
+    return text
 
-async def append_beacon_message(message, beacons_area, application):
+async def append_beacon_message(message, beacons_area, application, beacons_dict):
     try:
         beacon = json.loads(message)
         timestamp = beacon.get('timestamp', 'Invalid Timestamp')
         try:
             timestamp_dt = datetime.fromisoformat(timestamp)
             local_timestamp = timestamp_dt.astimezone()
-            timestamp_str = local_timestamp.strftime('%Y-%m-%d %H:%M:%S %Z')
+            # **MODIFICATION**: Remove timezone from timestamp
+            timestamp_str = local_timestamp.strftime('%Y-%m-%d %H:%M:%S')
         except Exception:
             timestamp_str = 'Invalid Timestamp'
 
-        destination = beacon.get('destination', 'N/A')
-        path = beacon.get('path', 'N/A')
-        latitude = beacon.get('latitude', 'N/A')
-        longitude = beacon.get('longitude', 'N/A')
-        elevation = beacon.get('elevation', 'N/A')
-        comment = beacon.get('comment', 'N/A')
-        digipeated_via = beacon.get('digipeated_via', 'N/A')
-        country_code = beacon.get('country_code', 'N/A')  # Assuming country_code is part of beacon
-        formatted_message = (
-            f"{timestamp_str}: Dest={destination}, Path={path}, "
-            f"Coords=({latitude},{longitude}), Elev={elevation}, "
-            f"Comment={comment}, Digipeated Via={digipeated_via}, Country={country_code}\n"
-        )
+        destination = beacon.get('destination', 'N/A') or 'N/A'
+        path = beacon.get('path', 'N/A') or 'N/A'
+        latitude = beacon.get('latitude', 'N/A') or 'N/A'
+        longitude = beacon.get('longitude', 'N/A') or 'N/A'
+        elevation = beacon.get('elevation', 'N/A') or 'N/A'
+        comment = truncate_text(beacon.get('comment', 'N/A') or 'N/A')  # **MODIFICATION**: Truncate comment
+        digipeated_via = beacon.get('digipeated_via', 'N/A') or 'N/A'
+        country_code = beacon.get('country_code', 'N/A') or 'N/A'  # Assuming country_code is part of beacon
+
+        # Create a unique identifier for the beacon, e.g., timestamp + destination
+        beacon_id = f"{timestamp_str}_{destination}"
+
+        # Update the beacons_dict
+        beacons_dict[beacon_id] = {
+            'Time': timestamp_str,
+            'Destination': destination,
+            'Path': path,
+            'Latitude': latitude,
+            'Longitude': longitude,
+            'Elevation': elevation,
+            'Comment': comment,
+            'Digipeated_Via': digipeated_via,
+            'Country': country_code,
+            'last_seen': datetime.now()
+        }
+
+        # Refresh the beacons area
+        refresh_beacons_area(beacons_dict, beacons_area)
+
     except Exception:
-        formatted_message = f"Invalid beacon message: {message}\n"
+        error_message = f"Invalid beacon message: {message}\n"
+        beacons_area.text = error_message + beacons_area.text
+        # Optionally limit the number of displayed beacons
+        lines = beacons_area.text.split('\n')
+        if len(lines) > 1000:
+            beacons_area.text = '\n'.join(lines[:1000])
 
-    beacons_area.text = formatted_message + beacons_area.text
-    lines = beacons_area.text.split('\n')
-    if len(lines) > 1000:
-        beacons_area.text = '\n'.join(lines[:1000])
     application.invalidate()
-
 
 async def append_decoded_station_message(
     message,
@@ -457,6 +502,7 @@ async def append_decoded_station_message(
     unique_digipeated_area,
     unique_direct_dict,
     unique_digipeated_dict,
+    decoded_stations_dict,
     application
 ):
     try:
@@ -465,42 +511,55 @@ async def append_decoded_station_message(
         try:
             timestamp_dt = datetime.fromisoformat(timestamp)
             local_timestamp = timestamp_dt.astimezone()
-            timestamp_str = local_timestamp.strftime('%Y-%m-%d %H:%M:%S %Z')
+            # **MODIFICATION**: Remove timezone from timestamp
+            timestamp_str = local_timestamp.strftime('%Y-%m-%d %H:%M:%S')
         except Exception:
             timestamp_str = 'Invalid Timestamp'
 
-        destination = decoded.get('destination', 'N/A')
-        path = decoded.get('path', 'N/A')
-        snr = decoded.get('signal_quality', 'N/A')        # Corrected field
-        rssi = decoded.get('signal_strength', 'N/A')      # Corrected field
-        latitude = decoded.get('latitude', 'N/A')
-        longitude = decoded.get('longitude', 'N/A')
-        elevation = decoded.get('elevation', 'N/A')
-        distance = decoded.get('distance', 'N/A')
-        battery = decoded.get('battery', 'N/A')
-        comment = decoded.get('comment', 'N/A')
-        country_code = decoded.get('country_code', 'N/A')
-        digipeated_via = decoded.get('digipeated_via', 'N/A')
+        destination = decoded.get('destination', 'N/A') or 'N/A'
+        path = decoded.get('path', 'N/A') or 'N/A'
+        snr = decoded.get('signal_quality', 'N/A') or 'N/A'        # Corrected field
+        rssi = decoded.get('signal_strength', 'N/A') or 'N/A'      # Corrected field
+        latitude = decoded.get('latitude', 'N/A') or 'N/A'
+        longitude = decoded.get('longitude', 'N/A') or 'N/A'
+        elevation = decoded.get('elevation', 'N/A') or 'N/A'
+        distance = decoded.get('distance', 'N/A') or 'N/A'
+        battery = decoded.get('battery', 'N/A') or 'N/A'
+        comment = truncate_text(decoded.get('comment', 'N/A') or 'N/A')  # **MODIFICATION**: Truncate comment
+        country_code = decoded.get('country_code', 'N/A') or 'N/A'
+        digipeated_via = decoded.get('digipeated_via', 'N/A') or 'N/A'
         
-        formatted_message = (
-            f"{timestamp_str}: Callsign={callsign}, Dest={destination}, Path={path}, "
-            f"SNR={snr}, RSSI={rssi}, Coords=({latitude},{longitude}), Elev={elevation}, "
-            f"Distance={distance}, Battery={battery}, Comment={comment}, "
-            f"Country={country_code}, Digipeated Via={digipeated_via}\n"
-        )
+        # Create a unique identifier for the decoded station, e.g., timestamp + callsign
+        station_id = f"{timestamp_str}_{callsign}"
+
+        # Update the decoded_stations_dict
+        decoded_stations_dict[station_id] = {
+            'Time': timestamp_str,
+            'Callsign': callsign,
+            'Destination': destination,
+            'Path': path,
+            'SNR': snr,
+            'RSSI': rssi,
+            'Latitude': latitude,
+            'Longitude': longitude,
+            'Elevation': elevation,
+            'Distance': distance,
+            'Battery': battery,
+            'Comment': comment,
+            'Country': country_code,
+            'Digipeated_Via': digipeated_via,
+            'last_seen': datetime.now()
+        }
+
     except Exception:
-        formatted_message = f"Invalid decoded station message: {message}\n"
-        digipeated_via = None
-        snr = 'N/A'
-        rssi = 'N/A'
-        country_code = 'N/A'
+        error_message = f"Invalid decoded station message: {message}\n"
+        decoded_stations_area.text = error_message + decoded_stations_area.text
+        # Optionally limit the number of displayed stations
+        lines = decoded_stations_area.text.split('\n')
+        if len(lines) > 1000:
+            decoded_stations_area.text = '\n'.join(lines[:1000])
 
-    decoded_stations_area.text = formatted_message + decoded_stations_area.text
-    lines = decoded_stations_area.text.split('\n')
-    if len(lines) > 1000:
-        decoded_stations_area.text = '\n'.join(lines[:1000])
-
-    # Process Unique Callsigns
+    # Process Unique Callsigns as before
     process_unique_callsigns(
         callsign,
         digipeated_via,
@@ -513,8 +572,11 @@ async def append_decoded_station_message(
         unique_digipeated_area,
         application
     )
-    application.invalidate()
 
+    # Refresh the decoded stations area
+    refresh_decoded_stations_area(decoded_stations_dict, decoded_stations_area)
+
+    application.invalidate()
 
 def process_unique_callsigns(
     callsign,
@@ -550,8 +612,8 @@ def process_unique_callsigns(
         if callsign in unique_digipeated_dict:
             del unique_digipeated_dict[callsign]  # Remove to re-insert at the top
         unique_digipeated_dict[callsign] = {
-            'digipeated_via': digipeated_via,
-            'country_code': country_code,  # Added country_code
+            'Digipeated_Via': digipeated_via,
+            'Country': country_code,  # Added country_code
             'last_seen': current_time
         }
 
@@ -576,7 +638,6 @@ def process_unique_callsigns(
 
     application.invalidate()
 
-
 def refresh_unique_direct_area(unique_direct_dict, unique_direct_area):
     # Define column headers
     headers = f"{'Callsign':<20} {'SNR':<10} {'RSSI':<10} {'Country':<15} {'Seen':<15}\n"
@@ -587,13 +648,16 @@ def refresh_unique_direct_area(unique_direct_dict, unique_direct_area):
         # Calculate the time difference
         time_diff = current_time - data['last_seen']
         seen_str = format_timedelta(time_diff)
-        content += f"{callsign:<20} {data['SNR']:<10} {data['RSSI']:<10} {data['Country']:<15} {seen_str:<15}\n"
+        # Safely get each field with defaults
+        snr = data.get('SNR') or 'N/A'
+        rssi = data.get('RSSI') or 'N/A'
+        country = data.get('Country') or 'N/A'
+        content += f"{callsign:<20} {snr:<10} {rssi:<10} {country:<15} {seen_str:<15}\n"
     unique_direct_area.text = content
     # Optionally limit the number of displayed callsigns
     lines = unique_direct_area.text.split('\n')
     if len(lines) > 1001:  # 1000 data lines + headers
         unique_direct_area.text = '\n'.join(lines[:1001])
-
 
 def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area):
     # Define column headers
@@ -605,14 +669,105 @@ def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_are
         # Calculate the time difference
         time_diff = current_time - data['last_seen']
         seen_str = format_timedelta(time_diff)
-        country = data.get('country_code', 'N/A')
-        content += f"{callsign:<20} {data['digipeated_via']:<25} {country:<15} {seen_str:<15}\n"
+        digipeated_via = data.get('Digipeated_Via') or 'N/A'
+        country = data.get('Country') or 'N/A'
+        content += f"{callsign:<20} {digipeated_via:<25} {country:<15} {seen_str:<15}\n"
     unique_digipeated_area.text = content
     # Optionally limit the number of displayed callsigns
     lines = unique_digipeated_area.text.split('\n')
     if len(lines) > 1001:  # 1000 data lines + headers
         unique_digipeated_area.text = '\n'.join(lines[:1001])
 
+def refresh_beacons_area(beacons_dict, beacons_area):
+    # **MODIFICATION**: Increase 'Destination' column width from 15 to 20
+    # Define column headers
+    headers = f"{'Time':<20} {'Destination':<20} {'Path':<15} {'Latitude':<10} {'Longitude':<10} {'Elevation':<10} {'Comment':<20} {'Digipeated Via':<20} {'Country':<10}\n"
+    separator = f"{'-'*20} {'-'*20} {'-'*15} {'-'*10} {'-'*10} {'-'*10} {'-'*20} {'-'*20} {'-'*10}\n"
+    content = headers + separator
+    current_time = datetime.now()
+    
+    for beacon_id, data in reversed(beacons_dict.items()):
+        time_diff = current_time - data['last_seen']
+        seen_str = format_timedelta(time_diff)
+        # Safely get each field with defaults
+        time_field = data.get('Time') or 'N/A'
+        destination = data.get('Destination') or 'N/A'
+        path = data.get('Path') or 'N/A'
+        latitude = data.get('Latitude') or 'N/A'
+        longitude = data.get('Longitude') or 'N/A'
+        elevation = data.get('Elevation') or 'N/A'
+        comment = data.get('Comment') or 'N/A'
+        digipeated_via = data.get('Digipeated_Via') or 'N/A'
+        country = data.get('Country') or 'N/A'
+
+        content += (
+            f"{time_field:<20} "
+            f"{destination:<20} "  # Increased width from 15 to 20
+            f"{path:<15} "
+            f"{latitude:<10} "
+            f"{longitude:<10} "
+            f"{elevation:<10} "
+            f"{comment:<20} "
+            f"{digipeated_via:<20} "
+            f"{country:<10}\n"
+        )
+    
+    beacons_area.text = content
+    # Optionally limit the number of displayed beacons
+    lines = beacons_area.text.split('\n')
+    if len(lines) > 1001:  # 1000 data lines + headers
+        beacons_area.text = '\n'.join(lines[:1001])
+
+def refresh_decoded_stations_area(decoded_stations_dict, decoded_stations_area):
+    # **MODIFICATION**: Adjust 'Callsign' to 10 characters and ensure alignment
+    # Define column headers
+    headers = f"{'Time':<20} {'Callsign':<10} {'Destination':<20} {'Path':<15} {'SNR':<10} {'RSSI':<10} {'Latitude':<10} {'Longitude':<10} {'Elevation':<10} {'Distance':<10} {'Battery':<10} {'Comment':<20} {'Country':<10} {'Digipeated Via':<20}\n"
+    # **MODIFICATION**: Ensure the separator matches the headers
+    separator = f"{'-'*20} {'-'*10} {'-'*20} {'-'*15} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*20} {'-'*10} {'-'*20}\n"
+    content = headers + separator
+    current_time = datetime.now()
+    
+    for station_id, data in reversed(decoded_stations_dict.items()):
+        time_diff = current_time - data['last_seen']
+        seen_str = format_timedelta(time_diff)
+        # Safely get each field with defaults
+        time_field = data.get('Time') or 'N/A'
+        callsign = data.get('Callsign') or 'N/A'
+        destination = data.get('Destination') or 'N/A'
+        path = data.get('Path') or 'N/A'
+        snr = data.get('SNR') or 'N/A'
+        rssi = data.get('RSSI') or 'N/A'
+        latitude = data.get('Latitude') or 'N/A'
+        longitude = data.get('Longitude') or 'N/A'
+        elevation = data.get('Elevation') or 'N/A'
+        distance = data.get('Distance') or 'N/A'
+        battery = data.get('Battery') or 'N/A'
+        comment = data.get('Comment') or 'N/A'
+        country = data.get('Country') or 'N/A'
+        digipeated_via = data.get('Digipeated_Via') or 'N/A'
+
+        content += (
+            f"{time_field:<20} "
+            f"{callsign:<10} "         # Adjusted to 10 chars
+            f"{destination:<20} "
+            f"{path:<15} "
+            f"{snr:<10} "
+            f"{rssi:<10} "
+            f"{latitude:<10} "
+            f"{longitude:<10} "
+            f"{elevation:<10} "
+            f"{distance:<10} "
+            f"{battery:<10} "
+            f"{comment:<20} "
+            f"{country:<10} "
+            f"{digipeated_via:<20}\n"
+        )
+    
+    decoded_stations_area.text = content
+    # Optionally limit the number of displayed stations
+    lines = decoded_stations_area.text.split('\n')
+    if len(lines) > 1001:  # 1000 data lines + headers
+        decoded_stations_area.text = '\n'.join(lines[:1001])
 
 def format_timedelta(td):
     total_seconds = int(td.total_seconds())
@@ -626,13 +781,13 @@ def format_timedelta(td):
     parts.append(f"{seconds}s")
     return ' '.join(parts)
 
-
-async def update_seen_times(unique_direct_dict, unique_digipeated_dict, unique_direct_area, unique_digipeated_area, application):
+async def update_seen_times(unique_direct_dict, unique_digipeated_dict, beacons_dict, decoded_stations_dict, unique_direct_area, unique_digipeated_area, beacons_area, decoded_stations_area, application):
     while True:
         refresh_unique_direct_area(unique_direct_dict, unique_direct_area)
         refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area)
+        refresh_beacons_area(beacons_dict, beacons_area)              # Refresh beacons
+        refresh_decoded_stations_area(decoded_stations_dict, decoded_stations_area)  # Refresh decoded stations
         await asyncio.sleep(1)  # Update every second
-
 
 async def fetch_igates():
     try:
@@ -647,7 +802,6 @@ async def fetch_igates():
     except Exception as e:
         print(f"Error fetching iGates: {e}")
         return []
-
 
 async def select_igate(igates, default=None):
     # **MODIFICATION**: Place "Enter Manually" at the top without a separator
@@ -690,11 +844,10 @@ async def select_igate(igates, default=None):
                 # Show an error message and prompt again
                 await input_dialog(
                     title="Invalid Callsign",
-                    text="the entered callsign is invalid. Please enter a valid callsign."
+                    text="The entered callsign is invalid. Please enter a valid callsign."
                 ).run_async()
     else:
         return igate
-
 
 def validate_callsign(callsign):
     """
@@ -704,11 +857,9 @@ def validate_callsign(callsign):
     - At least one digit.
     - 1 to 7 alphanumeric characters, optionally followed by a hyphen and 1 to 2 alphanumeric characters.
     """
-    import re
     callsign_pattern_with_ssid = r"^(?=[^-]*\d)(?=(?:[^-]*[A-Za-z]){2,})[A-Za-z0-9]{1,7}(?:-[A-Za-z0-9]{1,2})?$"
     pattern = re.compile(callsign_pattern_with_ssid)
     return bool(pattern.match(callsign))
-
 
 # **MODIFICATION**: Define Styles for Status Indicator with Separate Styles for Dot and Text
 def get_style():
@@ -727,11 +878,6 @@ def get_style():
         # **OPTIONAL**: Style for "Enter Manually" to make it stand out
         'enter_manually': 'fg:cyan bold',              # Cyan bold text
     })
-
-    # Note: To apply the 'enter_manually' style, additional customization is needed.
-    # Since radiolist_dialog doesn't support individual item styles directly,
-    # this style key can be used if you implement a custom dialog or extend radiolist_dialog.
-
 
 if __name__ == '__main__':
     asyncio.run(main())
