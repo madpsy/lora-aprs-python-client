@@ -1,6 +1,8 @@
 # lora-aprs-python-client
 Lightweight Python application to view iGate logs from https://lora-aprs.live
 
+Check releases on the right for prebuilt binaries.
+
 Logs will appear in real time. As this uses the MQTT endpoint it has no concept of history (except the last iGate log). The up side is it creates no load on the server.
 
 Note: Some iGates haven't sent logs for a while so pick one you know is currently active.
