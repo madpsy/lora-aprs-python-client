@@ -460,6 +460,7 @@ async def append_beacon_message(message, beacons_area, application, beacons_dict
         latitude = beacon.get('latitude', 'N/A') or 'N/A'
         longitude = beacon.get('longitude', 'N/A') or 'N/A'
         elevation = beacon.get('elevation', 'N/A') or 'N/A'
+        distance = beacon.get('distance', 'N/A') or 'N/A'          # **NEW**: Distance
         comment = truncate_text(beacon.get('comment', 'N/A') or 'N/A')  # **MODIFICATION**: Truncate comment
         digipeated_via = beacon.get('digipeated_via', 'N/A') or 'N/A'
         country_code = beacon.get('country_code', 'N/A') or 'N/A'  # Assuming country_code is part of beacon
@@ -475,6 +476,7 @@ async def append_beacon_message(message, beacons_area, application, beacons_dict
             'Latitude': latitude,
             'Longitude': longitude,
             'Elevation': elevation,
+            'Distance': distance,                # **NEW**
             'Comment': comment,
             'Digipeated_Via': digipeated_via,
             'Country': country_code,
@@ -523,12 +525,12 @@ async def append_decoded_station_message(
         latitude = decoded.get('latitude', 'N/A') or 'N/A'
         longitude = decoded.get('longitude', 'N/A') or 'N/A'
         elevation = decoded.get('elevation', 'N/A') or 'N/A'
-        distance = decoded.get('distance', 'N/A') or 'N/A'
-        battery = decoded.get('battery', 'N/A') or 'N/A'
+        distance = decoded.get('distance', 'N/A') or 'N/A'        # **NEW**
+        battery = decoded.get('battery', 'N/A') or 'N/A'          # **NEW**
         comment = truncate_text(decoded.get('comment', 'N/A') or 'N/A')  # **MODIFICATION**: Truncate comment
         country_code = decoded.get('country_code', 'N/A') or 'N/A'
         digipeated_via = decoded.get('digipeated_via', 'N/A') or 'N/A'
-        
+
         # Create a unique identifier for the decoded station, e.g., timestamp + callsign
         station_id = f"{timestamp_str}_{callsign}"
 
@@ -543,8 +545,8 @@ async def append_decoded_station_message(
             'Latitude': latitude,
             'Longitude': longitude,
             'Elevation': elevation,
-            'Distance': distance,
-            'Battery': battery,
+            'Distance': distance,        # **NEW**
+            'Battery': battery,          # **NEW**
             'Comment': comment,
             'Country': country_code,
             'Digipeated_Via': digipeated_via,
@@ -560,12 +562,15 @@ async def append_decoded_station_message(
             decoded_stations_area.text = '\n'.join(lines[:1000])
 
     # Process Unique Callsigns as before
+    # **MODIFICATION**: Pass distance and elevation to process_unique_callsigns
     process_unique_callsigns(
         callsign,
         digipeated_via,
         snr,
         rssi,
         country_code,
+        distance,        # Pass actual distance
+        elevation,       # Pass actual elevation
         unique_direct_dict,
         unique_digipeated_dict,
         unique_direct_area,
@@ -584,6 +589,8 @@ def process_unique_callsigns(
     snr,
     rssi,
     country_code,
+    distance,         # **NEW**: Added parameter
+    elevation,        # **NEW**: Added parameter
     unique_direct_dict,
     unique_digipeated_dict,
     unique_direct_area,
@@ -605,6 +612,8 @@ def process_unique_callsigns(
             'SNR': snr,
             'RSSI': rssi,
             'Country': country_code,
+            'Distance': distance if distance != 'N/A' else 'N/A',       # **MODIFIED**
+            'Elevation': elevation if elevation != 'N/A' else 'N/A',    # **MODIFIED**
             'last_seen': current_time
         }
     else:
@@ -613,7 +622,9 @@ def process_unique_callsigns(
             del unique_digipeated_dict[callsign]  # Remove to re-insert at the top
         unique_digipeated_dict[callsign] = {
             'Digipeated_Via': digipeated_via,
-            'Country': country_code,  # Added country_code
+            'Country': country_code,
+            'Distance': distance if distance != 'N/A' else 'N/A',        # **MODIFIED**: Set to actual distance
+            'Elevation': elevation if elevation != 'N/A' else 'N/A',      # **MODIFIED**: Set to actual elevation
             'last_seen': current_time
         }
 
@@ -622,26 +633,31 @@ def process_unique_callsigns(
         if digipeated_via_callsign != 'N/A' and digipeated_via_callsign.strip() != '':
             # Check if the digipeated_via_callsign is already in unique_direct_dict
             if digipeated_via_callsign in unique_direct_dict:
-                # Update 'last_seen' and SNR/RSSI to current time and new values
-                del unique_direct_dict[digipeated_via_callsign]  # Remove to re-insert at the top
-            # Add or update the digipeated_via_callsign in unique_direct_dict
-            unique_direct_dict[digipeated_via_callsign] = {
-                'SNR': snr,       # Set SNR from main message
-                'RSSI': rssi,     # Set RSSI from main message
-                'Country': 'N/A', # Country remains 'N/A'
-                'last_seen': current_time
-            }
+                # **MODIFICATION**: Update 'SNR', 'RSSI', and 'last_seen' without altering Distance, Elevation, and Country
+                unique_direct_dict[digipeated_via_callsign]['SNR'] = snr
+                unique_direct_dict[digipeated_via_callsign]['RSSI'] = rssi
+                unique_direct_dict[digipeated_via_callsign]['last_seen'] = current_time
+            else:
+                # Add or update the digipeated_via_callsign in unique_direct_dict with 'N/A' for Distance, Elevation, and Country
+                unique_direct_dict[digipeated_via_callsign] = {
+                    'SNR': snr,       # Set SNR from main message
+                    'RSSI': rssi,     # Set RSSI from main message
+                    'Country': 'N/A', # Country remains 'N/A'
+                    'Distance': 'N/A',# **NEW**: Set to 'N/A'
+                    'Elevation': 'N/A',# **NEW**: Set to 'N/A'
+                    'last_seen': current_time
+                }
 
     # Refresh the displays
     refresh_unique_direct_area(unique_direct_dict, unique_direct_area)
-    refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area)
+    refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area, unique_direct_dict)  # **UPDATED CALL**
 
     application.invalidate()
 
 def refresh_unique_direct_area(unique_direct_dict, unique_direct_area):
-    # Define column headers
-    headers = f"{'Callsign':<20} {'SNR':<10} {'RSSI':<10} {'Country':<15} {'Seen':<15}\n"
-    separator = f"{'-'*20} {'-'*10} {'-'*10} {'-'*15} {'-'*15}\n"
+    # Define column headers with specified widths
+    headers = f"{'Callsign':<10} {'SNR':<6} {'RSSI':<6} {'Country':<7} {'Distance':<8} {'Elevation':<9} {'Seen':<12}\n"
+    separator = f"{'-'*10} {'-'*6} {'-'*6} {'-'*7} {'-'*8} {'-'*9} {'-'*12}\n"
     content = headers + separator
     current_time = datetime.now()
     for callsign, data in reversed(unique_direct_dict.items()):
@@ -652,17 +668,19 @@ def refresh_unique_direct_area(unique_direct_dict, unique_direct_area):
         snr = data.get('SNR') or 'N/A'
         rssi = data.get('RSSI') or 'N/A'
         country = data.get('Country') or 'N/A'
-        content += f"{callsign:<20} {snr:<10} {rssi:<10} {country:<15} {seen_str:<15}\n"
+        distance = data.get('Distance') or 'N/A'
+        elevation = data.get('Elevation') or 'N/A'
+        content += f"{callsign:<10} {snr:<6} {rssi:<6} {country:<7} {distance:<8} {elevation:<9} {seen_str:<12}\n"
     unique_direct_area.text = content
     # Optionally limit the number of displayed callsigns
     lines = unique_direct_area.text.split('\n')
     if len(lines) > 1001:  # 1000 data lines + headers
         unique_direct_area.text = '\n'.join(lines[:1001])
 
-def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area):
-    # Define column headers
-    headers = f"{'Callsign':<20} {'Digipeated Via':<25} {'Country':<15} {'Seen':<15}\n"
-    separator = f"{'-'*20} {'-'*25} {'-'*15} {'-'*15}\n"
+def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area, unique_direct_dict):
+    # Define column headers with specified widths
+    headers = f"{'Callsign':<10} {'Digipeated Via':<14} {'Country':<7} {'Distance':<8} {'Elevation':<9} {'Seen':<12}\n"
+    separator = f"{'-'*10} {'-'*14} {'-'*7} {'-'*8} {'-'*9} {'-'*12}\n"
     content = headers + separator
     current_time = datetime.now()
     for callsign, data in reversed(unique_digipeated_dict.items()):
@@ -671,7 +689,12 @@ def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_are
         seen_str = format_timedelta(time_diff)
         digipeated_via = data.get('Digipeated_Via') or 'N/A'
         country = data.get('Country') or 'N/A'
-        content += f"{callsign:<20} {digipeated_via:<25} {country:<15} {seen_str:<15}\n"
+
+        # **NEW MODIFICATION**: Retrieve Distance and Elevation from unique_digipeated_dict
+        distance = data.get('Distance', 'N/A') or 'N/A'
+        elevation = data.get('Elevation', 'N/A') or 'N/A'
+
+        content += f"{callsign:<10} {digipeated_via:<14} {country:<7} {distance:<8} {elevation:<9} {seen_str:<12}\n"
     unique_digipeated_area.text = content
     # Optionally limit the number of displayed callsigns
     lines = unique_digipeated_area.text.split('\n')
@@ -680,12 +703,12 @@ def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_are
 
 def refresh_beacons_area(beacons_dict, beacons_area):
     # **MODIFICATION**: Increase 'Destination' column width from 15 to 20
-    # Define column headers
-    headers = f"{'Time':<20} {'Destination':<20} {'Path':<15} {'Latitude':<10} {'Longitude':<10} {'Elevation':<10} {'Comment':<20} {'Digipeated Via':<20} {'Country':<10}\n"
-    separator = f"{'-'*20} {'-'*20} {'-'*15} {'-'*10} {'-'*10} {'-'*10} {'-'*20} {'-'*20} {'-'*10}\n"
+    # Define column headers with specified widths
+    headers = f"{'Time':<20} {'Destination':<20} {'Path':<15} {'Latitude':<10} {'Longitude':<10} {'Elevation':<10} {'Distance':<8} {'Comment':<20} {'Digipeated Via':<14} {'Country':<7}\n"
+    separator = f"{'-'*20} {'-'*20} {'-'*15} {'-'*10} {'-'*10} {'-'*10} {'-'*8} {'-'*20} {'-'*14} {'-'*7}\n"
     content = headers + separator
     current_time = datetime.now()
-    
+
     for beacon_id, data in reversed(beacons_dict.items()):
         time_diff = current_time - data['last_seen']
         seen_str = format_timedelta(time_diff)
@@ -696,6 +719,7 @@ def refresh_beacons_area(beacons_dict, beacons_area):
         latitude = data.get('Latitude') or 'N/A'
         longitude = data.get('Longitude') or 'N/A'
         elevation = data.get('Elevation') or 'N/A'
+        distance = data.get('Distance') or 'N/A'
         comment = data.get('Comment') or 'N/A'
         digipeated_via = data.get('Digipeated_Via') or 'N/A'
         country = data.get('Country') or 'N/A'
@@ -707,11 +731,12 @@ def refresh_beacons_area(beacons_dict, beacons_area):
             f"{latitude:<10} "
             f"{longitude:<10} "
             f"{elevation:<10} "
+            f"{distance:<8} "
             f"{comment:<20} "
-            f"{digipeated_via:<20} "
-            f"{country:<10}\n"
+            f"{digipeated_via:<14} "  # Adjusted to 14 chars
+            f"{country:<7}\n"        # Adjusted to 7 chars
         )
-    
+
     beacons_area.text = content
     # Optionally limit the number of displayed beacons
     lines = beacons_area.text.split('\n')
@@ -720,13 +745,13 @@ def refresh_beacons_area(beacons_dict, beacons_area):
 
 def refresh_decoded_stations_area(decoded_stations_dict, decoded_stations_area):
     # **MODIFICATION**: Adjust 'Callsign' to 10 characters and ensure alignment
-    # Define column headers
-    headers = f"{'Time':<20} {'Callsign':<10} {'Destination':<20} {'Path':<15} {'SNR':<10} {'RSSI':<10} {'Latitude':<10} {'Longitude':<10} {'Elevation':<10} {'Distance':<10} {'Battery':<10} {'Comment':<20} {'Country':<10} {'Digipeated Via':<20}\n"
+    # Define column headers with specified widths
+    headers = f"{'Time':<20} {'Callsign':<10} {'Destination':<20} {'Path':<15} {'SNR':<6} {'RSSI':<6} {'Latitude':<10} {'Longitude':<10} {'Elevation':<10} {'Distance':<8} {'Battery':<7} {'Comment':<20} {'Country':<7} {'Digipeated Via':<14}\n"
     # **MODIFICATION**: Ensure the separator matches the headers
-    separator = f"{'-'*20} {'-'*10} {'-'*20} {'-'*15} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*20} {'-'*10} {'-'*20}\n"
+    separator = f"{'-'*20} {'-'*10} {'-'*20} {'-'*15} {'-'*6} {'-'*6} {'-'*10} {'-'*10} {'-'*10} {'-'*8} {'-'*7} {'-'*20} {'-'*7} {'-'*14}\n"
     content = headers + separator
     current_time = datetime.now()
-    
+
     for station_id, data in reversed(decoded_stations_dict.items()):
         time_diff = current_time - data['last_seen']
         seen_str = format_timedelta(time_diff)
@@ -751,18 +776,18 @@ def refresh_decoded_stations_area(decoded_stations_dict, decoded_stations_area):
             f"{callsign:<10} "         # Adjusted to 10 chars
             f"{destination:<20} "
             f"{path:<15} "
-            f"{snr:<10} "
-            f"{rssi:<10} "
+            f"{snr:<6} "               # Adjusted to 6 chars
+            f"{rssi:<6} "              # Adjusted to 6 chars
             f"{latitude:<10} "
             f"{longitude:<10} "
             f"{elevation:<10} "
-            f"{distance:<10} "
-            f"{battery:<10} "
+            f"{distance:<8} "
+            f"{battery:<7} "           # Adjusted to 7 chars
             f"{comment:<20} "
-            f"{country:<10} "
-            f"{digipeated_via:<20}\n"
+            f"{country:<7} "           # Adjusted to 7 chars
+            f"{digipeated_via:<14}\n"  # Adjusted to 14 chars
         )
-    
+
     decoded_stations_area.text = content
     # Optionally limit the number of displayed stations
     lines = decoded_stations_area.text.split('\n')
@@ -784,7 +809,7 @@ def format_timedelta(td):
 async def update_seen_times(unique_direct_dict, unique_digipeated_dict, beacons_dict, decoded_stations_dict, unique_direct_area, unique_digipeated_area, beacons_area, decoded_stations_area, application):
     while True:
         refresh_unique_direct_area(unique_direct_dict, unique_direct_area)
-        refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area)
+        refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area, unique_direct_dict)
         refresh_beacons_area(beacons_dict, beacons_area)              # Refresh beacons
         refresh_decoded_stations_area(decoded_stations_dict, decoded_stations_area)  # Refresh decoded stations
         await asyncio.sleep(1)  # Update every second
