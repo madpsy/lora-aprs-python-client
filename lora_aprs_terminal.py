@@ -682,7 +682,11 @@ def refresh_unique_direct_area(unique_direct_dict, unique_direct_area):
     separator = f"{'-'*10} {'-'*6} {'-'*6} {'-'*7} {'-'*8} {'-'*9} {'-'*5} {'-'*12}\n"
     content = headers + separator
     current_time = datetime.now()
-    for callsign, data in reversed(unique_direct_dict.items()):
+    
+    # Sort the unique_direct_dict based on 'last_seen' in descending order
+    sorted_direct = sorted(unique_direct_dict.items(), key=lambda item: item[1]['last_seen'], reverse=True)
+    
+    for callsign, data in sorted_direct:
         # Calculate the time difference
         time_diff = current_time - data['last_seen']
         seen_str = format_timedelta(time_diff)
@@ -694,6 +698,7 @@ def refresh_unique_direct_area(unique_direct_dict, unique_direct_area):
         elevation = data.get('Elevation') or 'N/A'
         count = data.get('Count') or 0
         content += f"{callsign:<10} {snr:<6} {rssi:<6} {country:<7} {distance:<8} {elevation:<9} {count:<5} {seen_str:<12}\n"
+    
     unique_direct_area.text = content
     # Optionally limit the number of displayed callsigns
     lines = unique_direct_area.text.split('\n')
@@ -706,7 +711,11 @@ def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_are
     separator = f"{'-'*10} {'-'*14} {'-'*7} {'-'*8} {'-'*9} {'-'*5} {'-'*12}\n"
     content = headers + separator
     current_time = datetime.now()
-    for callsign, data in reversed(unique_digipeated_dict.items()):
+    
+    # Sort the unique_digipeated_dict based on 'last_seen' in descending order
+    sorted_digipeated = sorted(unique_digipeated_dict.items(), key=lambda item: item[1]['last_seen'], reverse=True)
+    
+    for callsign, data in sorted_digipeated:
         # Calculate the time difference
         time_diff = current_time - data['last_seen']
         seen_str = format_timedelta(time_diff)
@@ -717,6 +726,7 @@ def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_are
         count = data.get('Count') or 0
 
         content += f"{callsign:<10} {digipeated_via:<14} {country:<7} {distance:<8} {elevation:<9} {count:<5} {seen_str:<12}\n"
+    
     unique_digipeated_area.text = content
     # Optionally limit the number of displayed callsigns
     lines = unique_digipeated_area.text.split('\n')
