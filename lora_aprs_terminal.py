@@ -76,7 +76,7 @@ async def run_application(selected_igate, current_igate):
 
     # **NEW**: Modify Usage Info Line to Include MQTT Status Indicator
     usage_info = VSplit([
-        Label(text="Use Tab/Shift+Tab to move focus between sections. Use arrow keys to scroll. 'r' to reset tables and reconnect. Esc to open iGate menu.",
+        Label(text="Use Tab/Shift+Tab to move focus between sections. Use arrow keys to scroll. 'r' to reset tables and reconnect. Esc to open iGate menu. Text size: Ctrl +/-",
               style="class:instructions"),
         mqtt_status_indicator
     ], padding=1)
