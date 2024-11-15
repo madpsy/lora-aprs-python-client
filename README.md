@@ -10,6 +10,10 @@ python3 -m venv venv
 source venv/bin/activate
 pip3 install -r requirements.txt
 python3 lora_aprs_terminal.py
+
+or
+
+python3 lora_aprs_terminal.py <iGate callsign>
 ```
 
 Can either select an iGate interactively or specify one as the command line parameter. Use Tab to switch between sections for scrolling and Esc for the iGates menu.
