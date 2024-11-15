@@ -550,7 +550,8 @@ async def append_decoded_station_message(
             'Comment': comment,
             'Country': country_code,
             'Digipeated_Via': digipeated_via,
-            'last_seen': datetime.now()
+            'last_seen': datetime.now(),
+            'Count': 1                    # **NEW**: Initialize count
         }
 
     except Exception:
@@ -607,33 +608,53 @@ def process_unique_callsigns(
     if not digipeated_via or digipeated_via.strip() == '' or digipeated_via.upper() == 'N/A':
         # Direct call
         if callsign in unique_direct_dict:
-            del unique_direct_dict[callsign]  # Remove to re-insert at the top
-        unique_direct_dict[callsign] = {
-            'SNR': snr,
-            'RSSI': rssi,
-            'Country': country_code,
-            'Distance': distance if distance != 'N/A' else 'N/A',       # **MODIFIED**
-            'Elevation': elevation if elevation != 'N/A' else 'N/A',    # **MODIFIED**
-            'last_seen': current_time
-        }
+            # Increment the count
+            unique_direct_dict[callsign]['Count'] += 1
+            # Update other fields
+            unique_direct_dict[callsign]['SNR'] = snr
+            unique_direct_dict[callsign]['RSSI'] = rssi
+            unique_direct_dict[callsign]['Country'] = country_code
+            unique_direct_dict[callsign]['Distance'] = distance if distance != 'N/A' else 'N/A'
+            unique_direct_dict[callsign]['Elevation'] = elevation if elevation != 'N/A' else 'N/A'
+            unique_direct_dict[callsign]['last_seen'] = current_time
+        else:
+            unique_direct_dict[callsign] = {
+                'SNR': snr,
+                'RSSI': rssi,
+                'Country': country_code,
+                'Distance': distance if distance != 'N/A' else 'N/A',
+                'Elevation': elevation if elevation != 'N/A' else 'N/A',
+                'last_seen': current_time,
+                'Count': 1  # Initialize count
+            }
     else:
         # Digipeated call
         if callsign in unique_digipeated_dict:
-            del unique_digipeated_dict[callsign]  # Remove to re-insert at the top
-        unique_digipeated_dict[callsign] = {
-            'Digipeated_Via': digipeated_via,
-            'Country': country_code,
-            'Distance': distance if distance != 'N/A' else 'N/A',        # **MODIFIED**: Set to actual distance
-            'Elevation': elevation if elevation != 'N/A' else 'N/A',      # **MODIFIED**: Set to actual elevation
-            'last_seen': current_time
-        }
+            # Increment the count
+            unique_digipeated_dict[callsign]['Count'] += 1
+            # Update other fields
+            unique_digipeated_dict[callsign]['Digipeated_Via'] = digipeated_via
+            unique_digipeated_dict[callsign]['Country'] = country_code
+            unique_digipeated_dict[callsign]['Distance'] = distance if distance != 'N/A' else 'N/A'
+            unique_digipeated_dict[callsign]['Elevation'] = elevation if elevation != 'N/A' else 'N/A'
+            unique_digipeated_dict[callsign]['last_seen'] = current_time
+        else:
+            unique_digipeated_dict[callsign] = {
+                'Digipeated_Via': digipeated_via,
+                'Country': country_code,
+                'Distance': distance if distance != 'N/A' else 'N/A',        # **MODIFIED**: Set to actual distance
+                'Elevation': elevation if elevation != 'N/A' else 'N/A',      # **MODIFIED**: Set to actual elevation
+                'last_seen': current_time,
+                'Count': 1  # Initialize count
+            }
 
         # **NEW**: Add 'digipeated_via' callsign to Direct Callsigns with SNR and RSSI from main message
         digipeated_via_callsign = digipeated_via.upper()
         if digipeated_via_callsign != 'N/A' and digipeated_via_callsign.strip() != '':
             # Check if the digipeated_via_callsign is already in unique_direct_dict
             if digipeated_via_callsign in unique_direct_dict:
-                # **MODIFICATION**: Update 'SNR', 'RSSI', and 'last_seen' without altering Distance, Elevation, and Country
+                # **MODIFICATION**: Increment 'Count', Update 'SNR', 'RSSI', and 'last_seen' without altering Distance, Elevation, and Country
+                unique_direct_dict[digipeated_via_callsign]['Count'] += 1
                 unique_direct_dict[digipeated_via_callsign]['SNR'] = snr
                 unique_direct_dict[digipeated_via_callsign]['RSSI'] = rssi
                 unique_direct_dict[digipeated_via_callsign]['last_seen'] = current_time
@@ -645,7 +666,8 @@ def process_unique_callsigns(
                     'Country': 'N/A', # Country remains 'N/A'
                     'Distance': 'N/A',# **NEW**: Set to 'N/A'
                     'Elevation': 'N/A',# **NEW**: Set to 'N/A'
-                    'last_seen': current_time
+                    'last_seen': current_time,
+                    'Count': 1        # Initialize count
                 }
 
     # Refresh the displays
@@ -655,9 +677,9 @@ def process_unique_callsigns(
     application.invalidate()
 
 def refresh_unique_direct_area(unique_direct_dict, unique_direct_area):
-    # Define column headers with specified widths
-    headers = f"{'Callsign':<10} {'SNR':<6} {'RSSI':<6} {'Country':<7} {'Distance':<8} {'Elevation':<9} {'Seen':<12}\n"
-    separator = f"{'-'*10} {'-'*6} {'-'*6} {'-'*7} {'-'*8} {'-'*9} {'-'*12}\n"
+    # Define column headers with specified widths, including 'Count' before 'Seen'
+    headers = f"{'Callsign':<10} {'SNR':<6} {'RSSI':<6} {'Country':<7} {'Distance':<8} {'Elevation':<9} {'Count':<5} {'Seen':<12}\n"
+    separator = f"{'-'*10} {'-'*6} {'-'*6} {'-'*7} {'-'*8} {'-'*9} {'-'*5} {'-'*12}\n"
     content = headers + separator
     current_time = datetime.now()
     for callsign, data in reversed(unique_direct_dict.items()):
@@ -670,7 +692,8 @@ def refresh_unique_direct_area(unique_direct_dict, unique_direct_area):
         country = data.get('Country') or 'N/A'
         distance = data.get('Distance') or 'N/A'
         elevation = data.get('Elevation') or 'N/A'
-        content += f"{callsign:<10} {snr:<6} {rssi:<6} {country:<7} {distance:<8} {elevation:<9} {seen_str:<12}\n"
+        count = data.get('Count') or 0
+        content += f"{callsign:<10} {snr:<6} {rssi:<6} {country:<7} {distance:<8} {elevation:<9} {count:<5} {seen_str:<12}\n"
     unique_direct_area.text = content
     # Optionally limit the number of displayed callsigns
     lines = unique_direct_area.text.split('\n')
@@ -678,9 +701,9 @@ def refresh_unique_direct_area(unique_direct_dict, unique_direct_area):
         unique_direct_area.text = '\n'.join(lines[:1001])
 
 def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area, unique_direct_dict):
-    # Define column headers with specified widths
-    headers = f"{'Callsign':<10} {'Digipeated Via':<14} {'Country':<7} {'Distance':<8} {'Elevation':<9} {'Seen':<12}\n"
-    separator = f"{'-'*10} {'-'*14} {'-'*7} {'-'*8} {'-'*9} {'-'*12}\n"
+    # Define column headers with specified widths, including 'Count' before 'Seen'
+    headers = f"{'Callsign':<10} {'Digipeated Via':<14} {'Country':<7} {'Distance':<8} {'Elevation':<9} {'Count':<5} {'Seen':<12}\n"
+    separator = f"{'-'*10} {'-'*14} {'-'*7} {'-'*8} {'-'*9} {'-'*5} {'-'*12}\n"
     content = headers + separator
     current_time = datetime.now()
     for callsign, data in reversed(unique_digipeated_dict.items()):
@@ -689,12 +712,11 @@ def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_are
         seen_str = format_timedelta(time_diff)
         digipeated_via = data.get('Digipeated_Via') or 'N/A'
         country = data.get('Country') or 'N/A'
+        distance = data.get('Distance') or 'N/A'
+        elevation = data.get('Elevation') or 'N/A'
+        count = data.get('Count') or 0
 
-        # **NEW MODIFICATION**: Retrieve Distance and Elevation from unique_digipeated_dict
-        distance = data.get('Distance', 'N/A') or 'N/A'
-        elevation = data.get('Elevation', 'N/A') or 'N/A'
-
-        content += f"{callsign:<10} {digipeated_via:<14} {country:<7} {distance:<8} {elevation:<9} {seen_str:<12}\n"
+        content += f"{callsign:<10} {digipeated_via:<14} {country:<7} {distance:<8} {elevation:<9} {count:<5} {seen_str:<12}\n"
     unique_digipeated_area.text = content
     # Optionally limit the number of displayed callsigns
     lines = unique_digipeated_area.text.split('\n')
