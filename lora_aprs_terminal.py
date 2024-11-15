@@ -13,6 +13,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 from prompt_toolkit.layout.dimension import Dimension  # For dynamic sizing
 from prompt_toolkit.formatted_text import HTML  # For colored status indicators
+from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog  # Import for dialogs
 
 if sys.platform.startswith('win'):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -649,22 +650,64 @@ async def fetch_igates():
 
 
 async def select_igate(igates, default=None):
-    igate_tuples = [(igate, igate) for igate in igates]
-    from prompt_toolkit.shortcuts import radiolist_dialog
+    # **MODIFICATION**: Place "Enter Manually" at the top without a separator
+    manual_entry_value = "__manual_entry__"
+
+    igate_tuples = [
+        (manual_entry_value, "Enter Manually")
+    ] + [(igate, igate) for igate in igates]
 
     # **MODIFICATION**: Set default value if provided
     if default and default in igates:
         default_value = default
     else:
-        default_value = None
+        default_value = manual_entry_value  # Set "Enter Manually" as default if no previous selection
 
+    # Display the radiolist dialog
     igate = await radiolist_dialog(
         title="Select iGate",
-        text="Please select an iGate:",
+        text="Please select an iGate or choose to enter manually:",
         values=igate_tuples,
         default=default_value  # Set default selection
     ).run_async()
-    return igate
+
+    if igate == manual_entry_value:
+        # Prompt user to enter a callsign manually
+        while True:
+            user_input = await input_dialog(
+                title="Manual iGate Entry",
+                text="Please enter the iGate callsign:"
+            ).run_async()
+
+            if user_input is None:
+                # User cancelled the input dialog
+                return None
+
+            user_input = user_input.strip().upper()
+            if validate_callsign(user_input):
+                return user_input
+            else:
+                # Show an error message and prompt again
+                await input_dialog(
+                    title="Invalid Callsign",
+                    text="the entered callsign is invalid. Please enter a valid callsign."
+                ).run_async()
+    else:
+        return igate
+
+
+def validate_callsign(callsign):
+    """
+    Validate the callsign format using the provided regex.
+    This regex ensures:
+    - At least two letters.
+    - At least one digit.
+    - 1 to 7 alphanumeric characters, optionally followed by a hyphen and 1 to 2 alphanumeric characters.
+    """
+    import re
+    callsign_pattern_with_ssid = r"^(?=[^-]*\d)(?=(?:[^-]*[A-Za-z]){2,})[A-Za-z0-9]{1,7}(?:-[A-Za-z0-9]{1,2})?$"
+    pattern = re.compile(callsign_pattern_with_ssid)
+    return bool(pattern.match(callsign))
 
 
 # **MODIFICATION**: Define Styles for Status Indicator with Separate Styles for Dot and Text
@@ -680,8 +723,14 @@ def get_style():
         'status_connected_dot': 'fg:green bold',       # Green dot for connected
         'status_connected_text': 'fg:green bold',      # Green text for connected
         'status_disconnected_dot': 'fg:red bold',      # Red dot for disconnected
-        'status_disconnected_text': 'fg:green bold',    # Green text for disconnected
+        'status_disconnected_text': 'fg:red bold',     # Red text for disconnected
+        # **OPTIONAL**: Style for "Enter Manually" to make it stand out
+        'enter_manually': 'fg:cyan bold',              # Cyan bold text
     })
+
+    # Note: To apply the 'enter_manually' style, additional customization is needed.
+    # Since radiolist_dialog doesn't support individual item styles directly,
+    # this style key can be used if you implement a custom dialog or extend radiolist_dialog.
 
 
 if __name__ == '__main__':
