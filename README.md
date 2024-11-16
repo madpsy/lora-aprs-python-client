@@ -26,6 +26,10 @@ You can build a binary by running this (will output to the `dist` directory):
 
 `pyinstaller --onefile lora_aprs_terminal.py`
 
+In Windows, `pyinstaller` will be somewhere in your user's AppData directory, example:
+
+`C:\Users\madps\AppData\Local\Programs\Python\Python313\Scripts\pyinstaller.exe --onefile lora_aprs_terminal.py`
+
 Can either select an iGate interactively or specify one as the command line parameter. Use Tab to switch between sections for scrolling and Esc for the iGates menu.
 
 ![Main View](main.png?raw=true "Main View")
