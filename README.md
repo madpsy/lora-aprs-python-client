@@ -9,6 +9,8 @@ Logs will appear in real time. As this uses the MQTT endpoint it has no concept 
 
 Note: Some iGates haven't sent logs for a while so pick one you know is currently active.
 
+To run from source or build your own binary:
+
 ```
 git clone https://github.com/madpsy/lora-aprs-python-client.git
 cd lora-aprs-python-client
