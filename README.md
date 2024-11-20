@@ -26,7 +26,10 @@ python3 lora_aprs_terminal.py <iGate callsign>
 
 You can build a binary by running this (will output to the `dist` directory):
 
-`pyinstaller --onefile lora_aprs_terminal.py`
+```
+pyinstaller --onefile lora_aprs_terminal.py
+sudo cp dist/lora_aprs_terminal /usr/local/bin/
+```
 
 In Windows, `pyinstaller` will be somewhere in your user's AppData directory, example:
 
