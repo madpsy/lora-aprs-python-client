@@ -1,13 +1,13 @@
 import sys  # Import sys to access command-line arguments
 import asyncio
-import requests
 import ssl
 import json
+import aiohttp  # Import aiohttp for asynchronous HTTP requests
 from datetime import datetime, timedelta  # Import datetime and timedelta
 from collections import OrderedDict  # For maintaining order of callsigns
 from aiomqtt import Client
 from prompt_toolkit.application import Application
-from prompt_toolkit.layout import Layout, HSplit, VSplit
+from prompt_toolkit.layout import Layout, HSplit, VSplit, Window
 from prompt_toolkit.widgets import TextArea, Label, Frame, VerticalLine
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
@@ -17,8 +17,12 @@ from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog  # Import fo
 
 import re  # For callsign validation
 
+# Version of the application
+version = '1.5'
+
 if sys.platform.startswith('win'):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 
 async def main():
     current_igate = None  # Initialize current iGate as None
@@ -55,12 +59,22 @@ async def main():
             break
         # Else, loop back to re-select iGate
 
+
 async def run_application(selected_igate, current_igate):
     # Initialize connection status
     connection_status = {'status': False}
 
     # Initialize reset_in_progress flag
     reset_in_progress = {'value': False}
+
+    # Check for updates
+    new_version_available = await check_for_updates(version)
+
+    # Create the 'new_version_label' based on 'new_version_available'
+    if new_version_available:
+        new_version_label = Label(text='New Version Available: https://github.com/madpsy/lora-aprs-python-client', style='class:new_version')
+    else:
+        new_version_label = Label(text='')
 
     # Create UI components
     logs_area = TextArea(style="class:logs", scrollbar=True, focusable=True, read_only=True)
@@ -75,7 +89,7 @@ async def run_application(selected_igate, current_igate):
     beacons_dict = OrderedDict()            # New dictionary for beacons
     decoded_stations_dict = OrderedDict()   # New dictionary for decoded stations
 
-    # **MODIFICATION**: Create MQTT Status Indicator with formatted text
+    # Create MQTT Status Indicator with formatted text
     mqtt_status_indicator = Label(text=generate_status_text(connection_status['status']),
                                   style="")  # Style is handled within the text
 
@@ -86,12 +100,19 @@ async def run_application(selected_igate, current_igate):
     unique_direct_frame = Frame(body=unique_direct_area, title="Unique Callsigns (Direct)", height=Dimension(weight=1))
     unique_digipeated_frame = Frame(body=unique_digipeated_area, title="Unique Callsigns (Digipeated)", height=Dimension(weight=1))
 
-    # **NEW**: Modify Usage Info Line to Include MQTT Status Indicator
+    # Modify Usage Info Line to Include MQTT Status Indicator
     usage_info = VSplit([
         Label(text="Use Tab/Shift+Tab to move focus between sections. Use arrow keys to scroll. 'r' to reset tables and reconnect. Esc to open iGate menu. Text size: Ctrl +/-",
               style="class:instructions"),
         mqtt_status_indicator
     ], padding=1)
+
+    # Create header with Selected iGate and New Version Available message
+    header = VSplit([
+        Label(text=f"Selected iGate: {selected_igate}", style="class:header"),
+        Window(width=1, char=' '),  # Spacer
+        new_version_label,
+        ], padding=1)
 
     # Create layout
     unique_callsigns_frame = VSplit([
@@ -101,7 +122,7 @@ async def run_application(selected_igate, current_igate):
     ], height=Dimension(weight=1))
 
     body = HSplit([
-        Label(text=f"Selected iGate: {selected_igate}", style="class:header"),
+        header,
         usage_info,  # Replace previous instructions Label with the new usage_info containing status
         logs_frame,
         beacons_frame,
@@ -131,12 +152,10 @@ async def run_application(selected_igate, current_igate):
         print("Escape key pressed. Exiting to select iGate.")  # Logging
         event.app.exit(result=True)  # Return True to signal exit to select iGate
 
-    # **MODIFICATION**: Add Key Binding for 'r' to Reset Tables and Reconnect without console message
     @kb.add('r')
     def reset_and_reconnect(event):
         if not reset_in_progress['value']:
             reset_in_progress['value'] = True
-            # **REMOVED**: print("Reset and reconnect triggered.")  # Removed as per user request
             asyncio.create_task(handle_reset_and_reconnect(
                 selected_igate,       # Pass the current iGate
                 unique_direct_dict,
@@ -152,10 +171,10 @@ async def run_application(selected_igate, current_igate):
                 logs_area,            # Pass logs_area
                 beacons_area,         # Pass beacons_area
                 decoded_stations_area, # Pass decoded_stations_area
-                reset_in_progress      # Pass the reset flag
+                reset_in_progress,      # Pass the reset flag
+                update_seen_task_container  # Pass the task container
             ))
         else:
-            # **REMOVED**: print("Reset already in progress.")  # Optionally remove to hide messages
             pass  # Do nothing if reset is already in progress
 
     style = get_style()
@@ -168,10 +187,13 @@ async def run_application(selected_igate, current_igate):
         mouse_support=True,  # Enable mouse support for clicking to focus
     )
 
-    # **NEW**: Container to hold MQTT task for easy cancellation and reconnection
+    # Container to hold MQTT task for easy cancellation and reconnection
     mqtt_task_container = {'task': None}
 
-    # **NEW**: Start MQTT Handler Task and Store in Container
+    # Container to hold the update_seen_task for easy cancellation and reconnection
+    update_seen_task_container = {'task': None}
+
+    # Start MQTT Handler Task and Store in Container
     mqtt_task_container['task'] = asyncio.create_task(mqtt_handler(
         selected_igate,
         logs_area,
@@ -189,7 +211,7 @@ async def run_application(selected_igate, current_igate):
     ))
 
     # Start the background task for updating "Seen" times
-    update_seen_task = asyncio.create_task(update_seen_times(
+    update_seen_task_container['task'] = asyncio.create_task(update_seen_times(
         unique_direct_dict,
         unique_digipeated_dict,
         beacons_dict,
@@ -205,20 +227,23 @@ async def run_application(selected_igate, current_igate):
     exit_to_select_igate = await application.run_async()
 
     # After the application exits, we need to cancel the mqtt_task and update_seen_task
-    mqtt_task_container['task'].cancel()
-    update_seen_task.cancel()
-    try:
-        await mqtt_task_container['task']
-    except asyncio.CancelledError:
-        pass
-    try:
-        await update_seen_task
-    except asyncio.CancelledError:
-        pass
+    if update_seen_task_container['task'] is not None:
+        update_seen_task_container['task'].cancel()
+        try:
+            await update_seen_task_container['task']
+        except asyncio.CancelledError:
+            pass
+
+    if mqtt_task_container['task'] is not None:
+        mqtt_task_container['task'].cancel()
+        try:
+            await mqtt_task_container['task']
+        except asyncio.CancelledError:
+            pass
 
     return exit_to_select_igate
 
-# **NEW**: Handle Reset and Reconnect Logic
+
 async def handle_reset_and_reconnect(
     selected_igate,       # Current iGate
     unique_direct_dict,
@@ -231,31 +256,40 @@ async def handle_reset_and_reconnect(
     connection_status,
     mqtt_status_indicator,
     application,
-    logs_area,            # Pass logs_area
-    beacons_area,         # Pass beacons_area
-    decoded_stations_area, # Pass decoded_stations_area
-    reset_in_progress      # Pass the reset flag
+    logs_area,
+    beacons_area,
+    decoded_stations_area,
+    reset_in_progress,
+    update_seen_task_container  # Pass the update_seen_task container
 ):
     try:
-        # **FIX**: Clear data structures
+        # Cancel the update_seen_task before clearing dictionaries
+        if update_seen_task_container['task'] is not None:
+            update_seen_task_container['task'].cancel()
+            try:
+                await update_seen_task_container['task']
+            except asyncio.CancelledError:
+                pass
+
+        # Clear data structures
         unique_direct_dict.clear()
         unique_digipeated_dict.clear()
         beacons_dict.clear()
         decoded_stations_dict.clear()
 
-        # **FIX**: Clear UI tables
+        # Clear UI tables
         unique_direct_area.text = ""
         unique_digipeated_area.text = ""
         beacons_area.text = ""
         decoded_stations_area.text = ""
         logs_area.text = ""
 
-        # **FIX**: Update status to Disconnected
+        # Update status to Disconnected
         connection_status['status'] = False
         mqtt_status_indicator.text = generate_status_text(connection_status['status'])
         application.invalidate()
 
-        # **FIX**: Cancel existing MQTT task
+        # Cancel existing MQTT task
         if mqtt_task_container['task'] is not None:
             mqtt_task_container['task'].cancel()
             try:
@@ -263,12 +297,12 @@ async def handle_reset_and_reconnect(
             except asyncio.CancelledError:
                 pass
 
-        # **FIX**: Start a new MQTT handler
+        # Start a new MQTT handler
         mqtt_task_container['task'] = asyncio.create_task(mqtt_handler(
             selected_igate,
-            logs_area,             # Pass logs_area
-            beacons_area,          # Pass beacons_area
-            decoded_stations_area, # Pass decoded_stations_area
+            logs_area,
+            beacons_area,
+            decoded_stations_area,
             unique_direct_area,
             unique_digipeated_area,
             unique_direct_dict,
@@ -280,11 +314,23 @@ async def handle_reset_and_reconnect(
             mqtt_status_indicator
         ))
 
+        # Restart the update_seen_task
+        update_seen_task_container['task'] = asyncio.create_task(update_seen_times(
+            unique_direct_dict,
+            unique_digipeated_dict,
+            beacons_dict,
+            decoded_stations_dict,
+            unique_direct_area,
+            unique_digipeated_area,
+            beacons_area,
+            decoded_stations_area,
+            application
+        ))
     finally:
-        # **FIX**: Reset the reset_in_progress flag
+        # Reset the reset_in_progress flag
         reset_in_progress['value'] = False
 
-# **MODIFICATION**: Function to Generate Status Text with Colored Dot
+
 def generate_status_text(is_connected):
     if is_connected:
         return [
@@ -296,6 +342,7 @@ def generate_status_text(is_connected):
             ('class:status_disconnected_dot', '● '),
             ('class:status_disconnected_text', 'Disconnected')
         ]
+
 
 async def mqtt_handler(
     selected_igate,
@@ -323,12 +370,12 @@ async def mqtt_handler(
             transport='websockets',
             tls_context=tls_context,
         ) as client:
-            # **FIX**: Update connection status to Connected
+            # Update connection status to Connected
             connection_status['status'] = True
             mqtt_status_indicator.text = generate_status_text(connection_status['status'])
             application.invalidate()
 
-            # **FIX**: Subscribe to the topic
+            # Subscribe to the topic
             await client.subscribe(topic)
 
             # Iterate over the messages
@@ -349,11 +396,12 @@ async def mqtt_handler(
                     application
                 )
     except Exception as e:
-        # **FIX**: Update connection status to Disconnected on error
+        # Update connection status to Disconnected on error
         connection_status['status'] = False
         mqtt_status_indicator.text = generate_status_text(connection_status['status'])
         application.invalidate()
         print(f"Error in MQTT handler: {e}")  # Retain this for error debugging
+
 
 async def handle_message(
     topic,
@@ -414,6 +462,7 @@ async def handle_message(
         # Unknown message format
         return
 
+
 async def append_log_message(message, logs_area, application):
     try:
         log = json.loads(message)
@@ -421,7 +470,7 @@ async def append_log_message(message, logs_area, application):
         try:
             timestamp_dt = datetime.fromisoformat(timestamp)
             local_timestamp = timestamp_dt.astimezone()
-            # **MODIFICATION**: Remove timezone from timestamp
+            # Remove timezone from timestamp
             timestamp_str = local_timestamp.strftime('%Y-%m-%d %H:%M:%S')
         except Exception:
             timestamp_str = 'Invalid Timestamp'
@@ -438,10 +487,12 @@ async def append_log_message(message, logs_area, application):
         logs_area.text = '\n'.join(lines[:1000])
     application.invalidate()
 
+
 def truncate_text(text, max_length=20):
     if len(text) > max_length:
         return text[:max_length-3] + '...'
     return text
+
 
 async def append_beacon_message(message, beacons_area, application, beacons_dict):
     try:
@@ -450,20 +501,23 @@ async def append_beacon_message(message, beacons_area, application, beacons_dict
         try:
             timestamp_dt = datetime.fromisoformat(timestamp)
             local_timestamp = timestamp_dt.astimezone()
-            # **MODIFICATION**: Remove timezone from timestamp
+            # Remove timezone from timestamp
             timestamp_str = local_timestamp.strftime('%Y-%m-%d %H:%M:%S')
         except Exception:
             timestamp_str = 'Invalid Timestamp'
 
         destination = beacon.get('destination', 'N/A') or 'N/A'
         path = beacon.get('path', 'N/A') or 'N/A'
+        path = str(path)  # Ensure path is a string
+
         latitude = beacon.get('latitude', 'N/A') or 'N/A'
         longitude = beacon.get('longitude', 'N/A') or 'N/A'
         elevation = beacon.get('elevation', 'N/A') or 'N/A'
-        distance = beacon.get('distance', 'N/A') or 'N/A'          # **NEW**: Distance
         battery = beacon.get('battery', 'N/A') or 'N/A'
-        comment = truncate_text(beacon.get('comment', 'N/A') or 'N/A')  # **MODIFICATION**: Truncate comment
+        # Increase max_length to 40 for Beacons section
+        comment = truncate_text(beacon.get('comment', 'N/A') or 'N/A', max_length=40)
         digipeated_via = beacon.get('digipeated_via', 'N/A') or 'N/A'
+        digipeated_via = str(digipeated_via)  # Ensure digipeated_via is a string
         country_code = beacon.get('country_code', 'N/A') or 'N/A'  # Assuming country_code is part of beacon
 
         # Create a unique identifier for the beacon, e.g., timestamp + destination
@@ -477,7 +531,6 @@ async def append_beacon_message(message, beacons_area, application, beacons_dict
             'Latitude': latitude,
             'Longitude': longitude,
             'Elevation': elevation,
-            'Distance': distance,                # **NEW**
             'Battery': battery,
             'Comment': comment,
             'Digipeated_Via': digipeated_via,
@@ -488,8 +541,8 @@ async def append_beacon_message(message, beacons_area, application, beacons_dict
         # Refresh the beacons area
         refresh_beacons_area(beacons_dict, beacons_area)
 
-    except Exception:
-        error_message = f"Invalid beacon message: {message}\n"
+    except Exception as e:
+        error_message = f"Invalid beacon message: {message}\nError: {e}\n"
         beacons_area.text = error_message + beacons_area.text
         # Optionally limit the number of displayed beacons
         lines = beacons_area.text.split('\n')
@@ -497,6 +550,7 @@ async def append_beacon_message(message, beacons_area, application, beacons_dict
             beacons_area.text = '\n'.join(lines[:1000])
 
     application.invalidate()
+
 
 async def append_decoded_station_message(
     message,
@@ -515,23 +569,26 @@ async def append_decoded_station_message(
         try:
             timestamp_dt = datetime.fromisoformat(timestamp)
             local_timestamp = timestamp_dt.astimezone()
-            # **MODIFICATION**: Remove timezone from timestamp
+            # Remove timezone from timestamp
             timestamp_str = local_timestamp.strftime('%Y-%m-%d %H:%M:%S')
         except Exception:
             timestamp_str = 'Invalid Timestamp'
 
         destination = decoded.get('destination', 'N/A') or 'N/A'
         path = decoded.get('path', 'N/A') or 'N/A'
-        snr = decoded.get('signal_quality', 'N/A') or 'N/A'        # Corrected field
-        rssi = decoded.get('signal_strength', 'N/A') or 'N/A'      # Corrected field
+        path = str(path)  # Ensure path is a string
+
+        snr = decoded.get('signal_quality', 'N/A') or 'N/A'
+        rssi = decoded.get('signal_strength', 'N/A') or 'N/A'
         latitude = decoded.get('latitude', 'N/A') or 'N/A'
         longitude = decoded.get('longitude', 'N/A') or 'N/A'
         elevation = decoded.get('elevation', 'N/A') or 'N/A'
-        distance = decoded.get('distance', 'N/A') or 'N/A'        # **NEW**
-        battery = decoded.get('battery', 'N/A') or 'N/A'          # **NEW**
-        comment = truncate_text(decoded.get('comment', 'N/A') or 'N/A')  # **MODIFICATION**: Truncate comment
+        distance = decoded.get('distance', 'N/A') or 'N/A'        # New
+        battery = decoded.get('battery', 'N/A') or 'N/A'          # New
+        comment = truncate_text(decoded.get('comment', 'N/A') or 'N/A')  # Truncate comment to default length
         country_code = decoded.get('country_code', 'N/A') or 'N/A'
         digipeated_via = decoded.get('digipeated_via', 'N/A') or 'N/A'
+        digipeated_via = str(digipeated_via)  # Ensure digipeated_via is a string
 
         # Create a unique identifier for the decoded station, e.g., timestamp + callsign
         station_id = f"{timestamp_str}_{callsign}"
@@ -547,46 +604,46 @@ async def append_decoded_station_message(
             'Latitude': latitude,
             'Longitude': longitude,
             'Elevation': elevation,
-            'Distance': distance,        # **NEW**
-            'Battery': battery,          # **NEW**
+            'Distance': distance,
+            'Battery': battery,
             'Comment': comment,
             'Country': country_code,
             'Digipeated_Via': digipeated_via,
             'last_seen': datetime.now(),
-            'Count': 1                    # **NEW**: Initialize count
+            'Count': 1                    # Initialize count
         }
 
-    except Exception:
-        error_message = f"Invalid decoded station message: {message}\n"
+        # Process Unique Callsigns
+        process_unique_callsigns(
+            callsign,
+            digipeated_via,
+            snr,
+            rssi,
+            country_code,
+            distance,
+            elevation,
+            battery,
+            decoded_stations_dict,
+            unique_direct_dict,
+            unique_digipeated_dict,
+            unique_direct_area,
+            unique_digipeated_area,
+            application
+        )
+
+        # Refresh the decoded stations area
+        refresh_decoded_stations_area(decoded_stations_dict, decoded_stations_area)
+
+    except Exception as e:
+        error_message = f"Invalid decoded station message: {message}\nError: {e}\n"
         decoded_stations_area.text = error_message + decoded_stations_area.text
         # Optionally limit the number of displayed stations
         lines = decoded_stations_area.text.split('\n')
         if len(lines) > 1000:
             decoded_stations_area.text = '\n'.join(lines[:1000])
 
-    # Process Unique Callsigns as before
-    # **MODIFICATION**: Pass distance and elevation to process_unique_callsigns
-    process_unique_callsigns(
-        callsign,
-        digipeated_via,
-        snr,
-        rssi,
-        country_code,
-        distance,        # Pass actual distance
-        elevation,       # Pass actual elevation
-        battery,
-        decoded_stations_dict,
-        unique_direct_dict,
-        unique_digipeated_dict,
-        unique_direct_area,
-        unique_digipeated_area,
-        application
-    )
-
-    # Refresh the decoded stations area
-    refresh_decoded_stations_area(decoded_stations_dict, decoded_stations_area)
-
     application.invalidate()
+
 
 def process_unique_callsigns(
     callsign,
@@ -618,16 +675,16 @@ def process_unique_callsigns(
             unique_direct_dict[callsign]['Country'] = country_code
             unique_direct_dict[callsign]['Distance'] = distance if distance != 'N/A' else 'N/A'
             unique_direct_dict[callsign]['Elevation'] = elevation if elevation != 'N/A' else 'N/A'
-            
-            # **MODIFICATION**: Set 'Battery' only if not set by digipeated section
-            if not (callsign in unique_digipeated_dict and 
-                    unique_digipeated_dict[callsign].get('Battery') and 
+
+            # Set 'Battery' only if not set by digipeated section
+            if not (callsign in unique_digipeated_dict and
+                    unique_digipeated_dict[callsign].get('Battery') and
                     unique_digipeated_dict[callsign]['Battery'] != 'N/A'):
                 unique_direct_dict[callsign]['Battery'] = battery if battery != 'N/A' else unique_direct_dict[callsign].get('Battery', 'N/A')
-            
+
             unique_direct_dict[callsign]['last_seen'] = current_time
         else:
-            # **MODIFICATION**: Initialize 'Battery' only if not set by digipeated section
+            # Initialize 'Battery' only if not set by digipeated section
             if callsign in unique_digipeated_dict and \
                unique_digipeated_dict[callsign].get('Battery') and \
                unique_digipeated_dict[callsign]['Battery'] != 'N/A':
@@ -668,15 +725,14 @@ def process_unique_callsigns(
                 'Count': 1
             }
 
-        # **MODIFICATION**: Add 'digipeated_via' to direct callsigns without setting 'Battery'
+        # Add 'digipeated_via' to direct callsigns without setting 'Battery'
         digipeated_via_callsign = digipeated_via.upper()
         if digipeated_via_callsign != 'N/A' and digipeated_via_callsign.strip() != '':
             if digipeated_via_callsign in unique_direct_dict:
                 unique_direct_dict[digipeated_via_callsign]['Count'] += 1
                 unique_direct_dict[digipeated_via_callsign]['SNR'] = snr
                 unique_direct_dict[digipeated_via_callsign]['RSSI'] = rssi
-                # **MODIFICATION**: Do NOT set 'Battery' for digipeated_via_callsign
-                # Instead, ensure it remains as is or set to 'N/A'
+                # Do NOT set 'Battery' for digipeated_via_callsign
                 unique_direct_dict[digipeated_via_callsign]['Battery'] = unique_direct_dict[digipeated_via_callsign].get('Battery', 'N/A')
                 unique_direct_dict[digipeated_via_callsign]['last_seen'] = current_time
             else:
@@ -686,7 +742,7 @@ def process_unique_callsigns(
                     'Country': 'N/A',
                     'Distance': 'N/A',
                     'Elevation': 'N/A',
-                    'Battery': 'N/A',  # **MODIFICATION**: Set 'Battery' to 'N/A'
+                    'Battery': 'N/A',  # Set 'Battery' to 'N/A'
                     'last_seen': current_time,
                     'Count': 1
                 }
@@ -703,10 +759,10 @@ def refresh_unique_direct_area(unique_direct_dict, unique_direct_area):
     separator = f"{'-'*10} {'-'*6} {'-'*6} {'-'*7} {'-'*8} {'-'*9} {'-'*7} {'-'*5} {'-'*12}\n"
     content = headers + separator
     current_time = datetime.now()
-    
+
     # Sort the unique_direct_dict based on 'last_seen' in descending order
     sorted_direct = sorted(unique_direct_dict.items(), key=lambda item: item[1]['last_seen'], reverse=True)
-    
+
     for callsign, data in sorted_direct:
         # Calculate the time difference
         time_diff = current_time - data['last_seen']
@@ -720,12 +776,13 @@ def refresh_unique_direct_area(unique_direct_dict, unique_direct_area):
         battery = data.get('Battery') or 'N/A'  # New field
         count = data.get('Count') or 0
         content += f"{callsign:<10} {snr:<6} {rssi:<6} {country:<7} {distance:<8} {elevation:<9} {battery:<7} {count:<5} {seen_str:<12}\n"
-    
+
     unique_direct_area.text = content
     # Optionally limit the number of displayed callsigns
     lines = unique_direct_area.text.split('\n')
     if len(lines) > 1001:  # 1000 data lines + headers
         unique_direct_area.text = '\n'.join(lines[:1001])
+
 
 def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area, unique_direct_dict):
     # Define column headers with specified widths, including 'Battery' before 'Count' and 'Count' before 'Seen'
@@ -733,10 +790,10 @@ def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_are
     separator = f"{'-'*10} {'-'*14} {'-'*7} {'-'*8} {'-'*9} {'-'*7} {'-'*5} {'-'*12}\n"
     content = headers + separator
     current_time = datetime.now()
-    
+
     # Sort the unique_digipeated_dict based on 'last_seen' in descending order
     sorted_digipeated = sorted(unique_digipeated_dict.items(), key=lambda item: item[1]['last_seen'], reverse=True)
-    
+
     for callsign, data in sorted_digipeated:
         # Calculate the time difference
         time_diff = current_time - data['last_seen']
@@ -749,12 +806,13 @@ def refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_are
         count = data.get('Count') or 0
 
         content += f"{callsign:<10} {digipeated_via:<14} {country:<7} {distance:<8} {elevation:<9} {battery:<7} {count:<5} {seen_str:<12}\n"
-    
+
     unique_digipeated_area.text = content
     # Optionally limit the number of displayed callsigns
     lines = unique_digipeated_area.text.split('\n')
     if len(lines) > 1001:  # 1000 data lines + headers
         unique_digipeated_area.text = '\n'.join(lines[:1001])
+
 
 def refresh_beacons_area(beacons_dict, beacons_area):
     # Define column headers with specified widths
@@ -765,9 +823,8 @@ def refresh_beacons_area(beacons_dict, beacons_area):
         f"{'Latitude':<10} "
         f"{'Longitude':<10} "
         f"{'Elevation':<10} "
-        f"{'Distance':<8} "
-        f"{'Battery':<7} "     # **New Column**
-        f"{'Comment':<20} "
+        f"{'Battery':<7} "
+        f"{'Comment':<40} "   # Increased width to 40
         f"{'Digipeated Via':<14} "
         f"{'Country':<7}\n"
     )
@@ -778,9 +835,8 @@ def refresh_beacons_area(beacons_dict, beacons_area):
         f"{'-'*10} "
         f"{'-'*10} "
         f"{'-'*10} "
-        f"{'-'*8} "
-        f"{'-'*7} "          # **New Column**
-        f"{'-'*20} "
+        f"{'-'*7} "
+        f"{'-'*40} "        # Adjusted separator to match new width
         f"{'-'*14} "
         f"{'-'*7}\n"
     )
@@ -788,34 +844,38 @@ def refresh_beacons_area(beacons_dict, beacons_area):
     current_time = datetime.now()
 
     for beacon_id, data in reversed(beacons_dict.items()):
-        time_diff = current_time - data['last_seen']
-        seen_str = format_timedelta(time_diff)
-        # Safely get each field with defaults
-        time_field = data.get('Time') or 'N/A'
-        destination = data.get('Destination') or 'N/A'
-        path = data.get('Path') or 'N/A'
-        latitude = data.get('Latitude') or 'N/A'
-        longitude = data.get('Longitude') or 'N/A'
-        elevation = data.get('Elevation') or 'N/A'
-        distance = data.get('Distance') or 'N/A'
-        battery = data.get('Battery') or 'N/A'  # **New Line**
-        comment = data.get('Comment') or 'N/A'
-        digipeated_via = data.get('Digipeated_Via') or 'N/A'
-        country = data.get('Country') or 'N/A'
+        try:
+            time_diff = current_time - data['last_seen']
+            seen_str = format_timedelta(time_diff)
+            # Safely get each field with defaults
+            time_field = data.get('Time') or 'N/A'
+            destination = data.get('Destination') or 'N/A'
+            path = data.get('Path') or 'N/A'
+            path = str(path)  # Ensure path is a string
+            latitude = data.get('Latitude') or 'N/A'
+            longitude = data.get('Longitude') or 'N/A'
+            elevation = data.get('Elevation') or 'N/A'
+            battery = data.get('Battery') or 'N/A'
+            comment = data.get('Comment') or 'N/A'
+            digipeated_via = data.get('Digipeated_Via') or 'N/A'
+            digipeated_via = str(digipeated_via)  # Ensure digipeated_via is a string
+            country = data.get('Country') or 'N/A'
 
-        content += (
-            f"{time_field:<20} "
-            f"{destination:<20} "
-            f"{path:<15} "
-            f"{latitude:<10} "
-            f"{longitude:<10} "
-            f"{elevation:<10} "
-            f"{distance:<8} "
-            f"{battery:<7} "         # **New Column**
-            f"{comment:<20} "
-            f"{digipeated_via:<14} "
-            f"{country:<7}\n"
-        )
+            content += (
+                f"{time_field:<20} "
+                f"{destination:<20} "
+                f"{path:<15} "
+                f"{latitude:<10} "
+                f"{longitude:<10} "
+                f"{elevation:<10} "
+                f"{battery:<7} "
+                f"{comment:<40} "   # Adjusted width to 40
+                f"{digipeated_via:<14} "
+                f"{country:<7}\n"
+            )
+        except Exception as e:
+            print(f"Error processing beacon {beacon_id}: {e}")
+            continue
 
     beacons_area.text = content
     # Optionally limit the number of displayed beacons
@@ -823,56 +883,62 @@ def refresh_beacons_area(beacons_dict, beacons_area):
     if len(lines) > 1001:
         beacons_area.text = '\n'.join(lines[:1001])
 
+
 def refresh_decoded_stations_area(decoded_stations_dict, decoded_stations_area):
-    # **MODIFICATION**: Adjust 'Callsign' to 10 characters and ensure alignment
     # Define column headers with specified widths
     headers = f"{'Time':<20} {'Callsign':<10} {'Destination':<20} {'Path':<15} {'SNR':<6} {'RSSI':<6} {'Latitude':<10} {'Longitude':<10} {'Elevation':<10} {'Distance':<8} {'Battery':<7} {'Comment':<20} {'Country':<7} {'Digipeated Via':<14}\n"
-    # **MODIFICATION**: Ensure the separator matches the headers
     separator = f"{'-'*20} {'-'*10} {'-'*20} {'-'*15} {'-'*6} {'-'*6} {'-'*10} {'-'*10} {'-'*10} {'-'*8} {'-'*7} {'-'*20} {'-'*7} {'-'*14}\n"
     content = headers + separator
     current_time = datetime.now()
 
     for station_id, data in reversed(decoded_stations_dict.items()):
-        time_diff = current_time - data['last_seen']
-        seen_str = format_timedelta(time_diff)
-        # Safely get each field with defaults
-        time_field = data.get('Time') or 'N/A'
-        callsign = data.get('Callsign') or 'N/A'
-        destination = data.get('Destination') or 'N/A'
-        path = data.get('Path') or 'N/A'
-        snr = data.get('SNR') or 'N/A'
-        rssi = data.get('RSSI') or 'N/A'
-        latitude = data.get('Latitude') or 'N/A'
-        longitude = data.get('Longitude') or 'N/A'
-        elevation = data.get('Elevation') or 'N/A'
-        distance = data.get('Distance') or 'N/A'
-        battery = data.get('Battery') or 'N/A'  # New field
-        comment = data.get('Comment') or 'N/A'
-        country = data.get('Country') or 'N/A'
-        digipeated_via = data.get('Digipeated_Via') or 'N/A'
+        try:
+            time_diff = current_time - data['last_seen']
+            seen_str = format_timedelta(time_diff)
+            # Safely get each field with defaults
+            time_field = data.get('Time') or 'N/A'
+            callsign = data.get('Callsign') or 'N/A'
+            destination = data.get('Destination') or 'N/A'
+            path = data.get('Path') or 'N/A'
+            path = str(path)  # Ensure path is a string
+            snr = data.get('SNR') or 'N/A'
+            rssi = data.get('RSSI') or 'N/A'
+            latitude = data.get('Latitude') or 'N/A'
+            longitude = data.get('Longitude') or 'N/A'
+            elevation = data.get('Elevation') or 'N/A'
+            distance = data.get('Distance') or 'N/A'
+            battery = data.get('Battery') or 'N/A'
+            comment = data.get('Comment') or 'N/A'
+            country = data.get('Country') or 'N/A'
+            digipeated_via = data.get('Digipeated_Via') or 'N/A'
+            digipeated_via = str(digipeated_via)  # Ensure digipeated_via is a string
 
-        content += (
-            f"{time_field:<20} "
-            f"{callsign:<10} "         # Adjusted to 10 chars
-            f"{destination:<20} "
-            f"{path:<15} "
-            f"{snr:<6} "               # Adjusted to 6 chars
-            f"{rssi:<6} "              # Adjusted to 6 chars
-            f"{latitude:<10} "
-            f"{longitude:<10} "
-            f"{elevation:<10} "
-            f"{distance:<8} "
-            f"{battery:<7} "           # Adjusted to 7 chars
-            f"{comment:<20} "
-            f"{country:<7} "           # Adjusted to 7 chars
-            f"{digipeated_via:<14}\n"  # Adjusted to 14 chars
-        )
+            content += (
+                f"{time_field:<20} "
+                f"{callsign:<10} "
+                f"{destination:<20} "
+                f"{path:<15} "
+                f"{snr:<6} "
+                f"{rssi:<6} "
+                f"{latitude:<10} "
+                f"{longitude:<10} "
+                f"{elevation:<10} "
+                f"{distance:<8} "
+                f"{battery:<7} "
+                f"{comment:<20} "
+                f"{country:<7} "
+                f"{digipeated_via:<14}\n"
+            )
+        except Exception as e:
+            print(f"Error processing decoded station {station_id}: {e}")
+            continue
 
     decoded_stations_area.text = content
     # Optionally limit the number of displayed stations
     lines = decoded_stations_area.text.split('\n')
-    if len(lines) > 1001:  # 1000 data lines + headers
+    if len(lines) > 1001:
         decoded_stations_area.text = '\n'.join(lines[:1001])
+
 
 def format_timedelta(td):
     total_seconds = int(td.total_seconds())
@@ -886,37 +952,67 @@ def format_timedelta(td):
     parts.append(f"{seconds}s")
     return ' '.join(parts)
 
+
 async def update_seen_times(unique_direct_dict, unique_digipeated_dict, beacons_dict, decoded_stations_dict, unique_direct_area, unique_digipeated_area, beacons_area, decoded_stations_area, application):
-    while True:
-        refresh_unique_direct_area(unique_direct_dict, unique_direct_area)
-        refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area, unique_direct_dict)
-        refresh_beacons_area(beacons_dict, beacons_area)              # Refresh beacons
-        refresh_decoded_stations_area(decoded_stations_dict, decoded_stations_area)  # Refresh decoded stations
-        await asyncio.sleep(1)  # Update every second
+    try:
+        while True:
+            refresh_unique_direct_area(unique_direct_dict, unique_direct_area)
+            refresh_unique_digipeated_area(unique_digipeated_dict, unique_digipeated_area, unique_direct_dict)
+            refresh_beacons_area(beacons_dict, beacons_area)
+            refresh_decoded_stations_area(decoded_stations_dict, decoded_stations_area)
+            await asyncio.sleep(1)  # Update every second
+    except asyncio.CancelledError:
+        # Task was cancelled
+        pass
+    except Exception as e:
+        print(f"Error in update_seen_times: {e}")
+
 
 async def fetch_igates():
+    igates_set = set()
+    tls_context = ssl.create_default_context()
     try:
-        response = requests.get('https://lora-aprs.live/api/callsigns?type=igate')
-        if response.status_code == 200:
-            data = response.json()
-            igates = data.get('igates', [])
-            return igates
-        else:
-            print(f"Failed to fetch iGates. Status code: {response.status_code}")  # Logging
-            return []
+        async with Client(
+            hostname='hydros.link9.net',
+            port=8183,
+            transport='websockets',
+            tls_context=tls_context,
+        ) as client:
+            await client.subscribe('lora_aprs/#')
+
+            messages = client.messages
+
+            # Collect messages until no more messages come in for a certain time
+            timeout = 1.0  # seconds
+            while True:
+                try:
+                    message = await asyncio.wait_for(messages.__anext__(), timeout=timeout)
+                    topic_parts = str(message.topic).split('/')  # Convert Topic to string
+                    if len(topic_parts) >= 2:
+                        igate = topic_parts[1]
+                        if validate_callsign(igate):
+                            igates_set.add(igate)
+                except asyncio.TimeoutError:
+                    # No more messages
+                    break
     except Exception as e:
-        print(f"Error fetching iGates: {e}")
+        print(f"Error fetching iGates via MQTT: {e}")
         return []
+    else:
+        igates = list(igates_set)
+        igates.sort()  # Sort the iGates alphanumerically
+        return igates
+
 
 async def select_igate(igates, default=None):
-    # **MODIFICATION**: Place "Enter Manually" at the top without a separator
+    # Place "Enter Manually" at the top without a separator
     manual_entry_value = "__manual_entry__"
 
     igate_tuples = [
         (manual_entry_value, "Enter Manually")
     ] + [(igate, igate) for igate in igates]
 
-    # **MODIFICATION**: Set default value if provided
+    # Set default value if provided
     if default and default in igates:
         default_value = default
     else:
@@ -954,6 +1050,7 @@ async def select_igate(igates, default=None):
     else:
         return igate
 
+
 def validate_callsign(callsign):
     """
     Validate the callsign format using the provided regex.
@@ -966,7 +1063,7 @@ def validate_callsign(callsign):
     pattern = re.compile(callsign_pattern_with_ssid)
     return bool(pattern.match(callsign))
 
-# **MODIFICATION**: Define Styles for Status Indicator with Separate Styles for Dot and Text
+
 def get_style():
     return Style.from_dict({
         'header': 'bold underline',
@@ -980,10 +1077,28 @@ def get_style():
         'status_connected_text': 'fg:green bold',      # Green text for connected
         'status_disconnected_dot': 'fg:red bold',      # Red dot for disconnected
         'status_disconnected_text': 'fg:red bold',     # Red text for disconnected
-        # **OPTIONAL**: Style for "Enter Manually" to make it stand out
+        'new_version': 'fg:red bold',                  # Red bold text for new version message
+        # Optional: Style for "Enter Manually" to make it stand out
         'enter_manually': 'fg:cyan bold',              # Cyan bold text
     })
 
+
+async def check_for_updates(current_version):
+    url = 'https://raw.githubusercontent.com/madpsy/lora-aprs-python-client/refs/heads/main/VERSION'
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    latest_version = (await resp.text()).strip()
+                    return latest_version != current_version
+                else:
+                    print(f"Failed to fetch latest version. Status code: {resp.status}")
+                    return False
+    except Exception as e:
+        print(f"Error checking for updates: {e}")
+        return False
+
+
 if __name__ == '__main__':
-    asyncio.run(main())
+        asyncio.run(main())
 

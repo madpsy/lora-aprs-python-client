@@ -1,5 +1,6 @@
 requests
 aiomqtt
+aiohttp
 prompt_toolkit
 requests
 typing_extensions
