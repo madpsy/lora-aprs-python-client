@@ -18,7 +18,7 @@ from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog  # Import fo
 import re  # For callsign validation
 
 # Version of the application
-version = '1.5'
+version = '1.6'
 
 if sys.platform.startswith('win'):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
