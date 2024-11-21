@@ -12,7 +12,7 @@ from prompt_toolkit.widgets import TextArea, Label, Frame, VerticalLine
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 from prompt_toolkit.layout.dimension import Dimension  # For dynamic sizing
-from prompt_toolkit.formatted_text import HTML  # For colored status indicators
+from prompt_toolkit.formatted_text import HTML  # For coloured status indicators
 from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog  # Import for dialogs
 
 import re  # For callsign validation
@@ -25,7 +25,7 @@ if sys.platform.startswith('win'):
 
 
 async def main():
-    current_igate = None  # Initialize current iGate as None
+    current_igate = None  # Init current iGate as None
     first_run = True       # Flag to indicate the first iteration
 
     while True:
@@ -61,10 +61,10 @@ async def main():
 
 
 async def run_application(selected_igate, current_igate):
-    # Initialize connection status
+    # Init connection status
     connection_status = {'status': False}
 
-    # Initialize reset_in_progress flag
+    # Init reset_in_progress flag
     reset_in_progress = {'value': False}
 
     # Check for updates
@@ -83,7 +83,7 @@ async def run_application(selected_igate, current_igate):
     unique_direct_area = TextArea(style="class:unique_direct", scrollbar=True, focusable=True, read_only=True)
     unique_digipeated_area = TextArea(style="class:unique_digipeated", scrollbar=True, focusable=True, read_only=True)
 
-    # Initialize data structures
+    # Init data structures
     unique_direct_dict = OrderedDict()
     unique_digipeated_dict = OrderedDict()
     beacons_dict = OrderedDict()            # New dictionary for beacons
@@ -610,7 +610,7 @@ async def append_decoded_station_message(
             'Country': country_code,
             'Digipeated_Via': digipeated_via,
             'last_seen': datetime.now(),
-            'Count': 1                    # Initialize count
+            'Count': 1                    
         }
 
         # Process Unique Callsigns
@@ -684,7 +684,7 @@ def process_unique_callsigns(
 
             unique_direct_dict[callsign]['last_seen'] = current_time
         else:
-            # Initialize 'Battery' only if not set by digipeated section
+            # Init 'Battery' only if not set by digipeated section
             if callsign in unique_digipeated_dict and \
                unique_digipeated_dict[callsign].get('Battery') and \
                unique_digipeated_dict[callsign]['Battery'] != 'N/A':
